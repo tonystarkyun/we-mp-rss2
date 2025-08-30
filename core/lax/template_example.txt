@@ -1,0 +1,40 @@
+# 示例模板
+
+# 基本变量替换
+欢迎您，{{ name }}！
+您的会员等级是：{{ level }}
+
+# 条件判断
+{% if level == 'VIP' %}
+  您是我们的尊贵VIP会员，享受专属优惠！
+{% endif %}
+
+# 嵌套变量
+您的订单信息：
+订单号：{{ order.id }}
+商品：{{ order.product }}
+数量：{{ order.quantity }}
+总价：{{ order.price * order.quantity }}
+
+
+JSON嵌套
+{
+ "feed": "{{feed.mp_name}}",
+"articles":[
+{% for article in articles %}
+    {"title": "{{article.title}}", "pub_date": "{{article.publish_time}}"}
+    {% if not loop.last %},{% endif %}
+{% endfor %}
+]
+}
+
+JSON嵌套2
+{
+ "feed": "{{feed.mp_name}}",
+"articles":[
+{% for article in articles %}
+    {"title": "{{article.title}}", "pub_date": "{{article.publish_time}}"}
+    {% if not loop.last %},{% endif %}
+{% endfor %}
+]
+}

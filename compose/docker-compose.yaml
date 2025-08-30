@@ -1,0 +1,40 @@
+version: '3.9'
+services:
+  mysql:
+    image: docker.1ms.run/mysql:8.3.0
+    container_name: db-mp
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass123
+      MYSQL_DATABASE: we_mp_rss
+      MYSQL_USER: rss_user
+      MYSQL_PASSWORD: pass123456
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
+
+  we-mp-rss:
+    image: ghcr.io/rachelos/we-mp-rss:latest
+    container_name: we-mp-rss
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - DB=mysql+pymysql://rss_user:pass123456@db-mp/we_mp_rss?charset=utf8mb4
+      - USERNAME=admin
+      - PASSWORD=admin@123
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - mysql
+
+volumes:
+  db_data:
+
+networks:
+  we-mp-rss:
+
+

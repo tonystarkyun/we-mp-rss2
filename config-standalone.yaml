@@ -1,0 +1,51 @@
+# WeRSS 单用户版本配置文件
+# 针对独立部署优化
+
+# 基本配置
+app_name: "WeRSS"
+version: "1.0.0-standalone"
+debug: false
+
+# 服务器配置
+server:
+  auto_reload: false
+  enable_job: true  # 启用后台任务
+
+# 端口配置（由启动器动态设置）
+port: 8001
+
+# 数据库配置（使用用户目录下的SQLite）
+db: "sqlite:///./data/werss.db"
+
+# 认证配置
+secret: "werss_standalone_2025"
+token_expire_minutes: 1440  # 24小时有效期，单用户使用更方便
+
+# 任务调度间隔（秒）
+interval: 300  # 5分钟检查一次，适合个人使用
+
+# 单用户优化配置
+standalone_mode: true
+
+# 日志配置
+logging:
+  level: "INFO"
+  file: "./data/logs/werss.log"
+
+# RSS配置
+rss:
+  title: "我的RSS订阅"
+  description: "个人RSS聚合服务"
+  link: "http://localhost:8001"
+  
+# 爬虫配置
+crawler:
+  timeout: 30
+  max_retries: 3
+  delay: 1
+  
+# 文件存储
+storage:
+  data_dir: "./data"
+  cache_dir: "./data/cache"
+  static_dir: "./static"
