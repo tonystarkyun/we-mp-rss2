@@ -11,7 +11,9 @@ a = Analysis(
         ('web.py', '.'), 
         ('init_sys.py', '.'), 
         ('data_sync.py', '.'),
-        ('driver', 'driver')  # 包含微信公众号和浏览器驱动
+        ('driver', 'driver'),  # 包含微信公众号和浏览器驱动
+        # Playwright 浏览器二进制文件
+        (r'C:\Users\Administrator\AppData\Local\ms-playwright', 'ms-playwright')
     ],
     hiddenimports=[
         'apis', 'core', 'jobs', 'web', 'main', 'init_sys', 'data_sync',
@@ -35,7 +37,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['runtime_hook.py'],
     excludes=[],
     noarchive=False,
     optimize=0,

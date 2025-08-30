@@ -209,17 +209,17 @@ def main():
                 # 确保当前目录是包含web.py的目录
                 original_cwd = os.getcwd()
                 
-                # 如果是PyInstaller打包的环境，需要从临时目录启动
+                # 保持在用户数据目录，不要切换回项目目录
+                # 如果是PyInstaller打包的环境，添加必要的路径但不切换工作目录
                 if hasattr(sys, '_MEIPASS'):
-                    os.chdir(sys._MEIPASS)
-                else:
-                    os.chdir(current_dir)
+                    # 在打包环境中，需要将临时目录添加到路径
+                    if sys._MEIPASS not in sys.path:
+                        sys.path.insert(0, sys._MEIPASS)
+                # 在开发环境中，添加项目目录到路径但保持当前工作目录
                 
-                # 添加必要的路径到sys.path
+                # 添加项目目录到路径（用于导入模块）
                 if str(current_dir) not in sys.path:
                     sys.path.insert(0, str(current_dir))
-                if hasattr(sys, '_MEIPASS') and sys._MEIPASS not in sys.path:
-                    sys.path.insert(0, sys._MEIPASS)
                 
                 # 设置环境变量和参数
                 os.environ['PORT'] = str(port)
@@ -235,14 +235,16 @@ def main():
                 
                 # 检查是否需要初始化数据库
                 db_file = work_dir / "data" / "db.db"
-                need_init = not db_file.exists()
+                init_flag_file = work_dir / "initialized.flag"
+                # 只有数据库不存在且没有初始化标记文件时才初始化
+                need_init = not db_file.exists() and not init_flag_file.exists()
                 
                 # 设置命令行参数，指定配置文件路径
                 if need_init:
                     print("首次启动，正在初始化数据库...")
                     sys.argv = ['main.py', '-job', 'True', '-init', 'True', '-config', str(config_file)]
                 else:
-                    print("数据库已存在，跳过初始化...")
+                    print("系统已初始化，跳过数据库初始化...")
                     sys.argv = ['main.py', '-job', 'True', '-init', 'False', '-config', str(config_file)]
                 
                 # 导入并运行主程序
@@ -275,6 +277,31 @@ def main():
         print("正在等待服务启动...")
         if wait_for_server(port):
             print("✅ WeRSS服务启动成功!")
+            
+            # 检查是否需要创建初始化标记文件
+            db_file = work_dir / "data" / "db.db"
+            init_flag_file = work_dir / "initialized.flag"
+            
+            # 如果标记文件不存在，且数据库存在，验证数据库表并创建标记文件
+            if not init_flag_file.exists():
+                try:
+                    # 检查关键表是否存在
+                    import sqlite3
+                    db_path = work_dir / "data" / "db.db"
+                    if db_path.exists():
+                        conn = sqlite3.connect(str(db_path))
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users';")
+                        if cursor.fetchone():
+                            init_flag_file.touch()
+                            print(f"数据库初始化成功，已创建标记文件: {init_flag_file}")
+                        else:
+                            print("⚠️  数据库表未正确创建，不创建标记文件")
+                        conn.close()
+                    else:
+                        print("⚠️  数据库文件未创建，不创建标记文件")
+                except Exception as e:
+                    print(f"验证数据库初始化状态失败: {e}")
             
             # 打开浏览器
             threading.Timer(2.0, lambda: open_browser(port)).start()
