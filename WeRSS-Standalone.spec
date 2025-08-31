@@ -50,7 +50,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='WeRSS-Standalone',
+    name='Business-Radar',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -63,4 +63,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='app_icon.ico',  # 添加图标文件路径
 )

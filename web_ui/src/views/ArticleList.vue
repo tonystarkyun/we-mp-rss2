@@ -111,7 +111,6 @@
       </a-modal>
 
       <a-card style="border:0">
-        <a-alert type="success" closable>{{activeFeed?.mp_intro||"请选择一个公众号码进行管理,搜索文章后再点击订阅会有惊喜哟！！！"}}</a-alert>
         <div class="search-bar">
           <a-input-search v-model="searchText" placeholder="搜索文章标题" @search="handleSearch" @keyup.enter="handleSearch" allow-clear />
         </div>
