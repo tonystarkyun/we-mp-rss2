@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class LinkCrawler:
     """链接管理爬虫服务"""
     
-    def __init__(self, headless: bool = True, timeout: int = 30000):
+    def __init__(self, headless: bool = True, timeout: int = 300000):
         self.headless = headless
         self.timeout = timeout
         self.browser_executable = self._find_browser_executable()
