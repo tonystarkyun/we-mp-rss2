@@ -17,7 +17,7 @@ class WXArticleFetcher:
         wait_timeout: 显式等待超时时间(秒)
     """
     
-    def __init__(self, wait_timeout: int = 10):
+    def __init__(self, wait_timeout: int = 300):
         """初始化文章获取器"""
         self.wait_timeout = wait_timeout
         self.controller = FirefoxController()

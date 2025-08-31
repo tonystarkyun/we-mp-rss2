@@ -175,10 +175,10 @@ def main():
             # 如果编码设置失败，继续使用默认编码
             pass
     
-    print("=" * 50)
-    print("    WeRSS - RSS订阅管理系统")
-    print("    单用户独立版本")
-    print("=" * 50)
+    print("=" * 60)
+    print("    欢迎使用商业雷达订阅助手")
+    print("    服务加载中，请稍后...")
+    print("=" * 60)
     
     try:
         # 设置信号处理
@@ -204,7 +204,9 @@ def main():
         # 启动服务
         def start_server():
             try:
-                print("正在启动FastAPI服务...")
+                print("正在初始化应用服务...")
+                print("加载应用模块...")
+                print("配置运行环境...")
                 
                 # 确保当前目录是包含web.py的目录
                 original_cwd = os.getcwd()
@@ -239,9 +241,11 @@ def main():
                 # 只有数据库不存在且没有初始化标记文件时才初始化
                 need_init = not db_file.exists() and not init_flag_file.exists()
                 
+                print("检查系统初始化状态...")
                 # 设置命令行参数，指定配置文件路径
                 if need_init:
                     print("首次启动，正在初始化数据库...")
+                    print("创建数据表结构...")
                     sys.argv = ['main.py', '-job', 'True', '-init', 'True', '-config', str(config_file)]
                 else:
                     print("系统已初始化，跳过数据库初始化...")
@@ -249,8 +253,9 @@ def main():
                 
                 # 导入并运行主程序
                 try:
+                    print("导入应用核心模块...")
                     from main import main as start_main
-                    print("正在启动主服务...")
+                    print("启动Web服务器...")
                     start_main()
                 except ImportError as e:
                     print(f"导入main模块失败: {e}")
@@ -304,6 +309,7 @@ def main():
                     print(f"验证数据库初始化状态失败: {e}")
             
             # 打开浏览器
+            print("正在加载应用页面请稍后...")
             threading.Timer(2.0, lambda: open_browser(port)).start()
             
             # 创建桌面快捷方式

@@ -7,7 +7,7 @@ from typing import List, Dict, Optional
 class LinkCrawler:
     """通用链接爬虫类"""
     
-    def __init__(self, headless: bool = True, timeout: int = 30000):
+    def __init__(self, headless: bool = True, timeout: int = 300000):
         self.headless = headless
         self.timeout = timeout
         
