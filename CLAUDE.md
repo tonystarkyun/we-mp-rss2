@@ -15,28 +15,37 @@ WeRSS (we-mp-rss) is a WeChat public account RSS subscription assistant that all
 - **Database initialization**: `python init_sys.py`
 
 ### Frontend Development
-- **Development server**: `cd web_ui && yarn dev`
-- **Build frontend**: `cd web_ui && yarn build` (or use `web_ui/build.bat` on Windows / `web_ui/build.sh` on Unix)
-- **Install dependencies**: `cd web_ui && yarn install`
+- **Development server**: `cd web_ui && yarn dev` (runs on port 3000, proxies API calls to backend)
+- **Build frontend**: `cd web_ui && yarn build` (or use `web_ui/build.sh` on Unix / `web_ui/build.bat` on Windows)
+- **Install dependencies**: `cd web_ui && yarn install` (or `npm install`)
+
+### Testing Commands
+- **Run integration tests**: `python test_integration.py`
+- **Test article processing**: `python test_article.py`
+- **Test crawler functionality**: `python test_crawler.py`
+- **Test notifications**: `python test.py`
 
 ### Build Commands
-- **Build executable**: Run `build.bat` (Windows) - creates PyInstaller executable in `dist/` directory
-- **Frontend build scripts**: Located in `web_ui/` directory, copies built files to `../static/`
+- **Linux executable**: `./build-linux.sh` (PyInstaller + frontend build)
+- **Windows executable**: `build.bat` or `build-standalone.bat`
+- **Simple builds**: `./build-simple-linux.sh` or `build-simple.bat`
+- **Frontend only**: `web_ui/build.sh` (Unix) / `web_ui/build.bat` (Windows)
 
 ### Docker Development
-- **Development**: `docker-compose -f compose/docker-compose-sqlite.yaml up`
-- **Production**: `docker-compose -f compose/docker-compose.yaml up`
+- **Development (SQLite)**: `docker-compose -f compose/docker-compose-sqlite.yaml up`
+- **Production (MySQL)**: `docker-compose -f compose/docker-compose.yaml up`
+- **Quick start**: `docker run -d --name we-mp-rss -p 8001:8001 -v ./data:/app/data ghcr.io/rachelos/we-mp-rss:latest`
 
 ## Architecture Overview
 
 ### Backend Structure
-- **Entry point**: `main.py` - starts FastAPI server with uvicorn, optionally starts background jobs
-- **Web framework**: `web.py` - FastAPI app configuration with CORS, static file serving, and API routing
-- **Configuration**: `core/config.py` - YAML-based configuration with environment variable support and optional encryption
-- **Database**: SQLAlchemy models in `core/models/` directory (supports SQLite default, MySQL optional)
-- **APIs**: RESTful endpoints in `apis/` directory for auth, articles, RSS feeds, user management, etc.
-- **Background jobs**: `jobs/` directory contains scheduled tasks for article fetching and notifications
-- **Core services**: `core/` directory contains business logic modules for RSS generation, WeChat integration, notifications, etc.
+- **Entry point**: `main.py` - starts FastAPI server with uvicorn, optionally starts APScheduler background jobs
+- **Web framework**: `web.py` - FastAPI app configuration with CORS, static file serving, JWT authentication, and API routing
+- **Configuration**: `core/config.py` - YAML-based configuration with `${VAR:-default}` environment variable syntax and encryption support
+- **Database**: SQLAlchemy ORM with models in `core/models/` (SQLite default, MySQL configurable)
+- **APIs**: 17 RESTful endpoint modules in `apis/` directory (`/api/v1/` prefix)
+- **Background jobs**: APScheduler-based task system in `jobs/` directory (article fetching, notifications, webhooks)
+- **Core services**: Business logic modules in `core/` directory (RSS generation, WeChat integration, article processing)
 
 ### Frontend Structure
 - **Framework**: Vue 3 + Vite + TypeScript
@@ -45,16 +54,17 @@ WeRSS (we-mp-rss) is a WeChat public account RSS subscription assistant that all
 - **API client**: Axios-based HTTP client in `src/api/`
 
 ### Key Components
-- **RSS Generation**: `core/rss.py` - converts WeChat articles to RSS feeds
-- **WeChat Integration**: `core/wx/` - handles WeChat public account authentication and content fetching
-- **Article Processing**: `core/article_lax.py` and `jobs/article.py` - content extraction and processing
-- **Notification System**: `core/notice/` - supports DingTalk, Feishu, WeChat webhooks
-- **Database Models**: `core/models/` - SQLAlchemy models for users, articles, feeds, tasks, etc.
+- **WeChat Authentication Flow**: QR code login via Selenium (`driver/wx.py`) → cookie persistence → session management
+- **Article Processing Pipeline**: WeChat content fetching (`core/wx/`) → content parsing (`core/article_lax.py`) → RSS generation (`core/rss.py`)
+- **Job System**: APScheduler-based background tasks initialized from `jobs/__init__.py` with modules for account management, article fetching, and notifications
+- **Browser Automation**: Firefox + Geckodriver integration for WeChat authentication (requires manual driver setup)
+- **Multi-format Notifications**: DingTalk, Feishu, WeChat webhook support via `core/notice/`
 
 ### Configuration
-- **Config file**: `config.yaml` (copy from `config.example.yaml`)
-- **Environment variables**: Supports `${VAR:-default}` syntax in YAML
-- **Key settings**: Database connection, notification webhooks, RSS settings, job scheduling
+- **Config file**: `config.yaml` (copy from `config.example.yaml`) with 50+ configurable parameters
+- **Environment variables**: Full `${VAR:-default}` syntax support (key vars: `DB`, `PORT`, `USERNAME`, `PASSWORD`)
+- **Encryption support**: Sensitive data encryption via `FileCrypto` class
+- **Key settings**: Database connection, notification webhooks, RSS settings, APScheduler job configuration
 
 ### Data Storage
 - **Database**: SQLite by default (`data/db.db`), configurable to MySQL
@@ -64,8 +74,17 @@ WeRSS (we-mp-rss) is a WeChat public account RSS subscription assistant that all
 
 ## Development Notes
 
-- The application supports both standalone executable builds (PyInstaller) and containerized deployment
-- Frontend development requires Node.js/Yarn, backend requires Python 3.8+
-- WeChat authentication uses QR codes and requires browser automation via Selenium
-- The system includes comprehensive job scheduling for automated content fetching and notifications
-- Configuration supports encryption for sensitive data using `FileCrypto` class
+### Build System
+- **Multiple PyInstaller specs**: `WeRSS-Linux.spec`, `WeRSS-Standalone.spec`, `WeRSS-Standalone-Safe.spec` for different deployment scenarios
+- **Frontend proxy**: Development server on port 3000 proxies API calls to backend (typically port 8001)
+- **Build artifacts**: Executables generated in `dist/` directory, frontend assets copied to `../static/`
+
+### Browser Automation Requirements
+- **Firefox + Geckodriver**: Required for WeChat QR code authentication (manual installation guide: `driver/geckodriver_manual_install.md`)
+- **WebDriver management**: Selenium-based automation with cookie persistence for session management
+
+### Development Workflow
+- **Database handling**: First run initializes database, subsequent runs preserve existing data
+- **Job system**: Optional background task scheduling (use `-job True` flag to enable)
+- **Live reload**: Frontend development server supports hot module replacement via Vite
+- **Testing approach**: Manual test execution (no formal test framework configured)

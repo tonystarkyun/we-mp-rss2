@@ -105,22 +105,38 @@ class LinkCrawler:
         if hasattr(sys, '_MEIPASS'):
             logger.info("检测到PyInstaller环境，查找系统浏览器")
             
-            # Windows Chrome路径
-            chrome_paths = [
-                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe"),
-                # Edge浏览器作为备选
-                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-            ]
+            # Linux和通用路径
+            if sys.platform.startswith("linux"):
+                browser_paths = [
+                    # Google Chrome Linux路径
+                    "/usr/bin/google-chrome",
+                    "/usr/bin/google-chrome-stable", 
+                    "/opt/google/chrome/chrome",
+                    "/snap/bin/chromium",
+                    "/usr/bin/chromium",
+                    "/usr/bin/chromium-browser",
+                    # Firefox Linux路径
+                    "/usr/bin/firefox",
+                    "/opt/firefox/firefox",
+                    "/snap/bin/firefox",
+                ]
+            else:
+                # Windows Chrome路径
+                browser_paths = [
+                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                    os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe"),
+                    # Edge浏览器作为备选
+                    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                ]
             
-            for chrome_path in chrome_paths:
-                if os.path.exists(chrome_path):
-                    logger.info(f"找到浏览器: {chrome_path}")
-                    return chrome_path
+            for browser_path in browser_paths:
+                if os.path.exists(browser_path):
+                    logger.info(f"找到浏览器: {browser_path}")
+                    return browser_path
             
-            logger.warning("未找到系统安装的Chrome或Edge浏览器")
+            logger.warning("未找到系统安装的Chrome、Firefox或Edge浏览器")
             return None
         
         # 开发环境使用Playwright自带的浏览器
