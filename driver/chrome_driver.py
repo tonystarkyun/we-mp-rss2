@@ -111,16 +111,71 @@ class ChromeController:
     def _setup_driver(self):
         """自动配置chromedriver"""
         try:
-            # 尝试使用webdriver_manager自动下载
+            # 优先检查环境变量设置的路径（PyInstaller打包后使用）
+            if 'CHROMEDRIVER_PATH' in os.environ:
+                chromedriver_path = os.environ['CHROMEDRIVER_PATH']
+                
+                # 如果是直接的可执行文件路径
+                if os.path.isfile(chromedriver_path) and os.access(chromedriver_path, os.X_OK):
+                    self.driver_path = chromedriver_path
+                    print(f"使用打包的ChromeDriver: {self.driver_path}")
+                    return
+                
+                # 如果是目录，搜索其中的可执行文件
+                if os.path.isdir(chromedriver_path):
+                    for root, dirs, files in os.walk(chromedriver_path):
+                        for file in files:
+                            if file == 'chromedriver' or (file.startswith('chromedriver') and not file.endswith('.zip')):
+                                file_path = os.path.join(root, file)
+                                # 检查是否为可执行文件
+                                if os.access(file_path, os.X_OK):
+                                    self.driver_path = file_path
+                                    print(f"使用打包的ChromeDriver: {self.driver_path}")
+                                    return
+                        
+                        # 如果找到zip文件，尝试解压
+                        for file in files:
+                            if file.endswith('.zip') and 'chromedriver' in file:
+                                zip_path = os.path.join(root, file)
+                                try:
+                                    import zipfile
+                                    import tempfile
+                                    
+                                    # 创建临时目录解压
+                                    temp_dir = tempfile.mkdtemp(prefix='chromedriver_')
+                                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                                        zip_ref.extractall(temp_dir)
+                                    
+                                    # 在解压的文件中寻找chromedriver
+                                    for extracted_root, _, extracted_files in os.walk(temp_dir):
+                                        for extracted_file in extracted_files:
+                                            if extracted_file == 'chromedriver':
+                                                extracted_path = os.path.join(extracted_root, extracted_file)
+                                                # 设置执行权限
+                                                os.chmod(extracted_path, 0o755)
+                                                self.driver_path = extracted_path
+                                                print(f"解压并使用ChromeDriver: {self.driver_path}")
+                                                return
+                                except Exception as e:
+                                    print(f"解压ChromeDriver失败: {e}")
+                                    continue
+            
+            # 尝试系统PATH中的chromedriver
+            import shutil
+            system_chromedriver = shutil.which('chromedriver')
+            if system_chromedriver:
+                self.driver_path = system_chromedriver
+                print(f"使用系统ChromeDriver: {self.driver_path}")
+                return
+            
+            # 最后尝试使用webdriver_manager自动下载
             self.driver_path = ChromeDriverManager().install()
-            print(f"使用ChromeDriver: {self.driver_path}")
+            print(f"使用下载的ChromeDriver: {self.driver_path}")
         except Exception as e:
-            print(f"ChromeDriver自动安装失败: {str(e)}")
-            print("请手动下载ChromeDriver:")
-            print("1. 访问 https://chromedriver.chromium.org/")
-            print("2. 下载对应Chrome版本的驱动")
-            print("3. 将chromedriver放入PATH中")
-            raise
+            print(f"ChromeDriver配置失败: {str(e)}")
+            # 尝试使用默认的chromedriver命令
+            self.driver_path = 'chromedriver'
+            print("使用默认chromedriver命令")
             
     def start_browser(self, headless=True):
         """启动浏览器"""
@@ -136,18 +191,22 @@ class ChromeController:
                 
             # 设置Chrome选项
             if headless:
-                self.options.add_argument("--headless")
+                self.options.add_argument("--headless=new")  # 使用新版headless模式
                 self.options.add_argument("--disable-gpu")
                 self.options.add_argument("--no-sandbox")
                 self.options.add_argument("--disable-dev-shm-usage")
+                # 关键修复：添加Wayland支持（解决AppImage环境差异）
+                self.options.add_argument("--ozone-platform-hint=auto")
+                # 关键稳定性参数（按用户提供的最佳实践）
+                self.options.add_argument("--window-size=1280,800")
+                self.options.add_argument("--no-first-run")
+                self.options.add_argument("--disable-features=Translate,BackForwardCache,AutomationControlled,TranslateUI,VizDisplayCompositor")
                 self.options.add_argument("--disable-software-rasterizer")
+                # 保持最精简的稳定参数，避免冲突
                 self.options.add_argument("--disable-background-timer-throttling")
                 self.options.add_argument("--disable-renderer-backgrounding")
-                self.options.add_argument("--disable-backgrounding-occluded-windows")
                 self.options.add_argument("--remote-debugging-port=0")
                 self.options.add_argument("--disable-extensions-file-access-check")
-                self.options.add_argument("--disable-features=TranslateUI")
-                self.options.add_argument("--disable-ipc-flooding-protection")
             else:
                 # 非headless模式需要这些参数来支持Wayland环境
                 self.options.add_argument("--no-sandbox")

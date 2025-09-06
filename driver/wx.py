@@ -23,13 +23,17 @@ class Wx:
     isLOCK=False
     WX_LOGIN="https://mp.weixin.qq.com/"
     WX_HOME="https://mp.weixin.qq.com/cgi-bin/home"
-    wx_login_url="static/wx_qrcode.png"
+    wx_login_url=os.path.join("static", "wx_qrcode.png")
     lock_file_path="data/.lock"
     CallBack=None
     Notice=None
     def __init__(self):
         self.lock_path=os.path.dirname(self.lock_file_path)
         self.refresh_interval=3660*24
+        # 确保static和data目录存在
+        static_dir = os.path.dirname(self.wx_login_url)
+        if not os.path.exists(static_dir):
+            os.makedirs(static_dir)
         if not os.path.exists(self.lock_path):
             os.makedirs(self.lock_path)
         self.Clean()
@@ -158,24 +162,24 @@ class Wx:
                     print(f"二维码图片获取失败: {str(e)}")
         return self.isLock
     def _get_browser_controller(self):
-        """获取可用的浏览器控制器，优先使用Chrome，Firefox作为备选"""
-        # 尝试使用Chrome（优先）
-        try:
-            chrome_controller = ChromeController()
-            if chrome_controller.system == "linux" and chrome_controller._is_chrome_installed_linux():
-                print("检测到Chrome浏览器，使用Chrome进行微信登录（推荐）")
-                return chrome_controller
-        except Exception as e:
-            print(f"Chrome初始化失败: {str(e)}")
-        
-        # Chrome不可用，尝试Firefox
+        """获取可用的浏览器控制器，优先使用Firefox（更稳定），Chrome作为备选"""
+        # 尝试使用Firefox（优先，在打包环境下更稳定）
         try:
             firefox_controller = FirefoxController()
             if firefox_controller.system == "linux" and firefox_controller._is_firefox_installed_linux():
-                print("使用Firefox进行微信登录")
+                print("检测到Firefox浏览器，使用Firefox进行微信登录（稳定选择）")
                 return firefox_controller
         except Exception as e:
             print(f"Firefox初始化失败: {str(e)}")
+        
+        # Firefox不可用，尝试Chrome
+        try:
+            chrome_controller = ChromeController()
+            if chrome_controller.system == "linux" and chrome_controller._is_chrome_installed_linux():
+                print("使用Chrome进行微信登录（备选方案）")
+                return chrome_controller
+        except Exception as e:
+            print(f"Chrome初始化失败: {str(e)}")
         
         # 都不可用，抛出异常
         raise Exception("未检测到可用的浏览器（Chrome或Firefox），请先安装其中一个")
@@ -207,7 +211,18 @@ class Wx:
             # 启动浏览器并打开微信公众平台
             print("正在启动浏览器...")
             controller.start_browser(headless=True)
+            print("浏览器启动成功，正在打开微信公众平台...")
+            
+            # 设置更长的页面加载超时
+            controller.driver.set_page_load_timeout(60)
             controller.open_url(self.WX_LOGIN)
+            print("微信公众平台页面打开成功")
+            
+            # 等待页面基本元素加载完成
+            print("等待页面基本结构加载...")
+            wait = WebDriverWait(controller.driver, 30)
+            wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+            print("页面基本结构加载完成")
             
             # 等待页面完全加载
             print("正在加载登录页面...")
@@ -227,8 +242,9 @@ class Wx:
             wait.until(EC.visibility_of(qrcode))
             # 全屏截图并裁剪二维码区域
             print("正在生成二维码图片...")
-            controller.driver.save_screenshot("temp_screenshot.png")
-            img = Image.open("temp_screenshot.png")
+            temp_screenshot = os.path.join("static", "temp_screenshot.png")
+            controller.driver.save_screenshot(temp_screenshot)
+            img = Image.open(temp_screenshot)
             
             # 获取二维码位置和尺寸
             location = qrcode.location
@@ -241,7 +257,8 @@ class Wx:
             # 裁剪并保存二维码
             img = img.crop((left, top, right, bottom))
             img.save(self.wx_login_url)
-            os.remove("temp_screenshot.png")
+            if os.path.exists(temp_screenshot):
+                os.remove(temp_screenshot)
             
             print("二维码已保存为 wx_qrcode.png，请扫码登录...")
             self.HasCode=True

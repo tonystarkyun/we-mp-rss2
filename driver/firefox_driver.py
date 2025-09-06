@@ -302,6 +302,22 @@ class FirefoxController:
     def _setup_firefox_binary_path(self):
         """设置Firefox二进制文件路径 - Linux专用"""
         if self.system == "linux":
+            # 检查是否在打包环境中运行
+            if hasattr(sys, '_MEIPASS'):
+                # 打包环境：查找打包的Firefox
+                packaged_firefox = os.path.join(sys._MEIPASS, 'firefox-native', 'firefox')
+                if os.path.exists(packaged_firefox) and os.access(packaged_firefox, os.X_OK):
+                    print(f"使用打包的原生Firefox: {packaged_firefox}")
+                    self.options.binary_location = packaged_firefox
+                    return packaged_firefox
+            else:
+                # 开发环境：优先使用本地下载的原生Firefox
+                native_firefox = os.path.expanduser("~/firefox-native/firefox/firefox")
+                if os.path.exists(native_firefox) and os.access(native_firefox, os.X_OK):
+                    print(f"使用原生Firefox: {native_firefox}")
+                    self.options.binary_location = native_firefox
+                    return native_firefox
+                
             # 检查系统Firefox路径
             firefox_paths = [
                 "/usr/bin/firefox",
@@ -353,6 +369,14 @@ class FirefoxController:
             self.options.set_preference("browser.cache.disk.enable", False)
             self.options.set_preference("browser.cache.memory.enable", False)
             self.options.set_preference("network.http.use-cache", False)
+            
+            # 禁用代理设置，避免VPN/代理冲突
+            self.options.set_preference("network.proxy.type", 0)  # 0 = 不使用代理
+            self.options.set_preference("network.proxy.no_proxies_on", "localhost,127.0.0.1")
+            self.options.set_preference("network.proxy.share_proxy_settings", False)
+            self.options.set_preference("network.proxy.socks", "")
+            self.options.set_preference("network.proxy.http", "")
+            self.options.set_preference("network.proxy.ssl", "")
 
             service = Service(executable_path=self.driver_path)
             self.driver = webdriver.Firefox(service=service, options=self.options)

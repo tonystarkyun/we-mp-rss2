@@ -42,34 +42,163 @@ class LinkCrawler:
             'error': None
         }
         
+        # 如果是PyInstaller环境，直接使用requests+BeautifulSoup避开Playwright问题
+        if hasattr(sys, '_MEIPASS'):
+            logger.info("检测到PyInstaller环境，使用requests+BeautifulSoup方案")
+            try:
+                import requests
+                from bs4 import BeautifulSoup
+                import re
+                
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
+                
+                logger.info(f"正在爬取网站: {url}")
+                response = requests.get(url, headers=headers, timeout=30)
+                response.raise_for_status()
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # 获取网站基本信息
+                result['website_info']['title'] = soup.title.string if soup.title else ''
+                meta_desc = soup.find('meta', attrs={'name': 'description'})
+                result['website_info']['description'] = meta_desc.get('content', '') if meta_desc else ''
+                
+                # 根据不同网站提取文章
+                articles = []
+                if 'pubmed.ncbi.nlm.nih.gov' in url:
+                    # PubMed特殊处理
+                    article_elements = soup.find_all('article', class_='full-docsum')
+                    for element in article_elements[:max_articles]:
+                        title_elem = element.find('a', class_='docsum-title')
+                        if title_elem:
+                            title = title_elem.get_text().strip()
+                            link = 'https://pubmed.ncbi.nlm.nih.gov' + title_elem.get('href', '')
+                            
+                            # 提取摘要
+                            abstract_elem = element.find('div', class_='full-view-snippet')
+                            abstract = abstract_elem.get_text().strip() if abstract_elem else ''
+                            
+                            # 提取作者
+                            authors_elem = element.find('span', class_='docsum-authors')
+                            authors = authors_elem.get_text().strip() if authors_elem else ''
+                            
+                            # 提取发表时间
+                            date_elem = element.find('span', class_='docsum-journal-citation')
+                            pub_date = date_elem.get_text().strip() if date_elem else ''
+                            
+                            articles.append({
+                                'title': title,
+                                'url': link,
+                                'content': abstract,
+                                'author': authors,
+                                'publish_date': pub_date,
+                                'source': 'PubMed'
+                            })
+                else:
+                    # 通用文章提取
+                    for selector in ['article', 'div.article', 'div.post', 'div.entry']:
+                        elements = soup.select(selector)
+                        if elements:
+                            break
+                    
+                    for element in elements[:max_articles]:
+                        title_elem = element.find(['h1', 'h2', 'h3', 'h4'])
+                        title = title_elem.get_text().strip() if title_elem else ''
+                        
+                        link_elem = element.find('a')
+                        link = link_elem.get('href', '') if link_elem else ''
+                        if link.startswith('/'):
+                            from urllib.parse import urljoin
+                            link = urljoin(url, link)
+                        
+                        content = element.get_text().strip()[:500] + '...' if len(element.get_text().strip()) > 500 else element.get_text().strip()
+                        
+                        if title and link:
+                            articles.append({
+                                'title': title,
+                                'url': link,
+                                'content': content,
+                                'author': '',
+                                'publish_date': '',
+                                'source': result['website_info']['title']
+                            })
+                
+                result['articles'] = articles
+                result['total_found'] = len(articles)
+                result['success'] = True
+                logger.info(f"使用requests方案成功爬取 {len(articles)} 篇文章")
+                return result
+                
+            except Exception as e:
+                logger.error(f"requests方案也失败: {e}")
+                # 继续尝试Playwright方案
+                pass
+        
         try:
             async with async_playwright() as p:
-                # 根据环境选择浏览器启动方式
-                if self.browser_executable:
-                    # 使用系统浏览器
-                    logger.info(f"使用系统浏览器: {self.browser_executable}")
-                    browser = await p.chromium.launch(
-                        executable_path=self.browser_executable,
-                        headless=self.headless,
-                        args=[
-                            '--no-sandbox',
-                            '--disable-dev-shm-usage',
-                            '--disable-gpu',
-                            '--disable-features=VizDisplayCompositor'
-                        ]
-                    )
+                # 检测环境并配置浏览器启动参数
+                if hasattr(sys, '_MEIPASS'):
+                    logger.info("检测到PyInstaller环境，清除打包浏览器路径使用系统浏览器")
+                    # 打印环境信息用于调试
+                    logger.info(f"MEIPASS目录: {sys._MEIPASS}")
+                    logger.info(f"原PLAYWRIGHT_BROWSERS_PATH: {os.environ.get('PLAYWRIGHT_BROWSERS_PATH', 'Not set')}")
+                    logger.info(f"DISPLAY: {os.environ.get('DISPLAY', 'Not set')}")
+                    
+                    # 完全清除PLAYWRIGHT_BROWSERS_PATH，让Playwright使用系统默认行为
+                    if 'PLAYWRIGHT_BROWSERS_PATH' in os.environ:
+                        del os.environ['PLAYWRIGHT_BROWSERS_PATH']
+                        logger.info("已清除PLAYWRIGHT_BROWSERS_PATH，使用系统默认浏览器路径")
+                    
+                    # 使用Playwright默认行为（就像开发环境一样）
+                    logger.info("使用Playwright默认浏览器启动方式")
+                    browser = await p.chromium.launch(headless=self.headless)
                 else:
-                    # 使用Playwright内置浏览器
-                    logger.info("使用Playwright内置浏览器")
+                    logger.info("使用Playwright内置Chromium浏览器")
                     browser = await p.chromium.launch(headless=self.headless)
                 
+                # 创建上下文时添加更多稳定性配置（使用Linux User-Agent）
                 context = await browser.new_context(
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    ignore_https_errors=True,
+                    java_script_enabled=True,
+                    viewport={'width': 1920, 'height': 1080}
                 )
                 page = await context.new_page()
                 
+                # 增加页面超时时间并使用更宽松的等待策略
+                page.set_default_timeout(60000)  # 60秒超时
+                page.set_default_navigation_timeout(60000)
+                
                 logger.info(f"正在爬取网站: {url}")
-                await page.goto(url, wait_until="domcontentloaded", timeout=self.timeout)
+                
+                # 在PyInstaller环境中使用更保守的页面加载策略
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        if attempt == 0:
+                            # 第一次尝试：标准加载
+                            await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+                            logger.info("页面加载完成")
+                            break
+                        elif attempt == 1:
+                            # 第二次尝试：仅等待开始加载
+                            await page.goto(url, wait_until='commit', timeout=20000)
+                            logger.info("页面开始加载完成")
+                            await asyncio.sleep(5)  # 手动等待
+                            break
+                        else:
+                            # 最后尝试：不等待，直接导航
+                            await page.goto(url, timeout=15000)
+                            logger.info("页面导航完成（无等待）")
+                            await asyncio.sleep(8)  # 更长的手动等待
+                            break
+                    except Exception as goto_error:
+                        logger.warning(f"第{attempt+1}次页面加载失败: {goto_error}")
+                        if attempt == max_retries - 1:
+                            raise goto_error
+                        await asyncio.sleep(2)  # 重试间隔
                 
                 # 等待页面加载
                 await asyncio.sleep(3)
@@ -101,9 +230,10 @@ class LinkCrawler:
     def _find_browser_executable(self) -> Optional[str]:
         """查找可用的浏览器可执行文件"""
         
-        # 如果是PyInstaller环境，优先查找系统安装的Chrome
+        # 如果是PyInstaller环境，使用Playwright内置浏览器
         if hasattr(sys, '_MEIPASS'):
-            logger.info("检测到PyInstaller环境，查找系统浏览器")
+            logger.info("检测到PyInstaller环境，使用Playwright内置浏览器")
+            return None  # 使用内置浏览器
             
             # Linux和通用路径
             if sys.platform.startswith("linux"):
@@ -141,6 +271,38 @@ class LinkCrawler:
         
         # 开发环境使用Playwright自带的浏览器
         logger.info("开发环境，使用Playwright内置浏览器")
+        return None
+    
+    def _get_firefox_executable(self) -> Optional[str]:
+        """获取Firefox可执行文件路径（与二维码生成功能保持一致）"""
+        
+        # 如果是PyInstaller环境，检查打包的Firefox
+        if hasattr(sys, '_MEIPASS'):
+            packaged_firefox = os.path.join(sys._MEIPASS, 'firefox-native', 'firefox')
+            if os.path.exists(packaged_firefox) and os.access(packaged_firefox, os.X_OK):
+                logger.info(f"使用打包的原生Firefox: {packaged_firefox}")
+                return packaged_firefox
+        else:
+            # 开发环境：优先使用本地下载的原生Firefox
+            native_firefox = os.path.expanduser("~/firefox-native/firefox/firefox")
+            if os.path.exists(native_firefox) and os.access(native_firefox, os.X_OK):
+                logger.info(f"使用原生Firefox: {native_firefox}")
+                return native_firefox
+                
+        # 检查系统Firefox路径
+        firefox_paths = [
+            "/usr/bin/firefox",
+            "/usr/bin/firefox-esr", 
+            "/snap/bin/firefox",
+            "/opt/firefox/firefox"
+        ]
+        
+        for path in firefox_paths:
+            if os.path.exists(path) and os.access(path, os.X_OK):
+                logger.info(f"使用系统Firefox: {path}")
+                return path
+        
+        logger.warning("未找到Firefox浏览器")
         return None
     
     async def _handle_cookie_consent(self, page):

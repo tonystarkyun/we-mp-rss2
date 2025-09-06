@@ -8,6 +8,16 @@ def main():
     """主启动函数，可被外部调用"""
     db_path = cfg.get("db", "data/db.db")
     # 只有数据库不存在时才初始化，或者明确指定强制初始化
+    # 处理重置数据库参数
+    if cfg.args.reset == "True":
+        print("🚨 正在完全重置数据库...")
+        from reset_database_final import reset_database, clean_files
+        if reset_database():
+            print("✅ 数据库重置完成")
+        else:
+            print("❌ 数据库重置失败")
+            exit(1)
+    
     if cfg.args.init=="True" and not os.path.exists(db_path):
         import init_sys as init
         init.init()

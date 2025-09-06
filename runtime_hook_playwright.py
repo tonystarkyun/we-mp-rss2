@@ -62,6 +62,16 @@ def setup_browser_paths():
         # 设置ChromeDriver路径
         chromedriver_path = os.path.join(bundle_dir, "chromedriver")
         if os.path.exists(chromedriver_path):
+            # 查找实际的chromedriver可执行文件
+            for root, dirs, files in os.walk(chromedriver_path):
+                for file in files:
+                    if file == 'chromedriver' and not file.endswith('.zip'):
+                        actual_path = os.path.join(root, file)
+                        if os.access(actual_path, os.X_OK):
+                            os.environ['CHROMEDRIVER_PATH'] = actual_path
+                            print(f"Runtime Hook: 设置 CHROMEDRIVER_PATH = {actual_path}")
+                            return
+            # 如果没找到可执行文件，设置目录路径让chrome_driver.py去处理
             os.environ['CHROMEDRIVER_PATH'] = chromedriver_path
             print(f"Runtime Hook: 设置 CHROMEDRIVER_PATH = {chromedriver_path}")
             

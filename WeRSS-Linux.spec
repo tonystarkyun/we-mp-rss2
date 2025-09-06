@@ -17,12 +17,14 @@ a = Analysis(
         ('data_sync.py', '.'),
         ('driver', 'driver'),  # 包含微信公众号和浏览器驱动
         ('web_ui/dist', 'static') if os.path.exists('web_ui/dist') else ('static', 'static'),  # 前端构建文件
-        # ChromeDriver依赖
+        # ChromeDriver依赖 - 包含完整的Linux路径结构
         (os.path.expanduser('~/.wdm/drivers/chromedriver'), 'chromedriver') if os.path.exists(os.path.expanduser('~/.wdm/drivers/chromedriver')) else ('', ''),
         # webdriver-manager缓存
         (os.path.expanduser('~/.wdm'), 'wdm') if os.path.exists(os.path.expanduser('~/.wdm')) else ('', ''),
         # Playwright浏览器完整目录
         (os.path.expanduser('~/.cache/ms-playwright'), 'playwright') if os.path.exists(os.path.expanduser('~/.cache/ms-playwright')) else ('', ''),
+        # 原生Firefox - 包含完整的Firefox目录
+        (os.path.expanduser('~/firefox-native/firefox'), 'firefox-native') if os.path.exists(os.path.expanduser('~/firefox-native/firefox')) else ('', ''),
     ],
     hiddenimports=[
         'apis', 'core', 'jobs', 'web', 'main', 'init_sys', 'data_sync',
@@ -41,6 +43,8 @@ a = Analysis(
         'core.task', 'core.task.task',
         'core.webhook', 'core.webhook.hook', 'core.webhook.parse',
         'core.wx', 'core.wx.base', 'core.wx.cfg', 'core.wx.wx', 'core.wx.wx1', 'core.wx.wx2', 'core.wx.wx3',
+        # 微信公众号类明确导入
+        'core.wx.wx1.MpsApi', 'core.wx.wx2.MpsWeb', 'core.wx.wx3.MpsAppMsg',
         'core.yaml_db', 'core.yaml_db.store_config',
         'apis.auth', 'apis.user', 'apis.links', 'apis.patents', 'apis.industries',
         'apis.article', 'apis.mps', 'apis.base', 'apis.config_management',
@@ -62,6 +66,7 @@ a = Analysis(
         # 核心依赖
         'asyncio', 'urllib.parse', 'logging', 'PIL', 'PIL.Image',
         'bcrypt', 'passlib', 'passlib.hash', 'passlib.context',
+        'python_multipart', 'python_multipart.multipart',
         'sqlalchemy', 'sqlalchemy.dialects', 'sqlalchemy.dialects.sqlite',
         'pydantic', 'pydantic_core',
         'yaml', 'requests', 'bs4', 'beautifulsoup4',
