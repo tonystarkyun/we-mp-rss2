@@ -35,6 +35,7 @@ class Config:
         parser.add_argument('-config', help='配置文件', default='config.yaml')
         parser.add_argument('-job', help='启动任务', default=False)
         parser.add_argument('-init', help='初始化数据库,初始化用户', default=False)
+        parser.add_argument('-reset', help='完全重置数据库，只保留默认管理员', default=False)
         args, _ = parser.parse_known_args()
         return args
     def _encrypt(self, data):

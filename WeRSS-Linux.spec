@@ -21,7 +21,7 @@ a = Analysis(
         (os.path.expanduser('~/.wdm/drivers/chromedriver'), 'chromedriver') if os.path.exists(os.path.expanduser('~/.wdm/drivers/chromedriver')) else ('', ''),
         # webdriver-manager缓存
         (os.path.expanduser('~/.wdm'), 'wdm') if os.path.exists(os.path.expanduser('~/.wdm')) else ('', ''),
-        # Playwright浏览器完整目录
+        # Playwright浏览器完整目录 - 恢复打包以确保浏览器可用
         (os.path.expanduser('~/.cache/ms-playwright'), 'playwright') if os.path.exists(os.path.expanduser('~/.cache/ms-playwright')) else ('', ''),
         # 原生Firefox - 包含完整的Firefox目录
         (os.path.expanduser('~/firefox-native/firefox'), 'firefox-native') if os.path.exists(os.path.expanduser('~/firefox-native/firefox')) else ('', ''),
