@@ -1,2 +1,16 @@
 __pycache__
 nul
+
+# Frontend build artifacts
+static/assets/
+static/index.html
+web_ui/dist/
+web_ui/node_modules/
+web_ui/.vite/
+web_ui/build/
+
+# Backend build artifacts  
+dist/
+build/
+*.exe
+we-rss-linux

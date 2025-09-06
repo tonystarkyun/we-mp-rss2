@@ -17,10 +17,12 @@ a = Analysis(
         ('data_sync.py', '.'),
         ('driver', 'driver'),  # 包含微信公众号和浏览器驱动
         ('web_ui/dist', 'static') if os.path.exists('web_ui/dist') else ('static', 'static'),  # 前端构建文件
-        # 包含Playwright浏览器（如果存在）
-    ] + ([
-        (os.path.expanduser('~/.cache/ms-playwright/chromium-1187'), 'playwright/chromium-1187')
-    ] if os.path.exists(os.path.expanduser('~/.cache/ms-playwright/chromium-1187')) else []) + [
+        # ChromeDriver依赖
+        (os.path.expanduser('~/.wdm/drivers/chromedriver'), 'chromedriver') if os.path.exists(os.path.expanduser('~/.wdm/drivers/chromedriver')) else ('', ''),
+        # webdriver-manager缓存
+        (os.path.expanduser('~/.wdm'), 'wdm') if os.path.exists(os.path.expanduser('~/.wdm')) else ('', ''),
+        # Playwright浏览器完整目录
+        (os.path.expanduser('~/.cache/ms-playwright'), 'playwright') if os.path.exists(os.path.expanduser('~/.cache/ms-playwright')) else ('', ''),
     ],
     hiddenimports=[
         'apis', 'core', 'jobs', 'web', 'main', 'init_sys', 'data_sync',
@@ -51,10 +53,12 @@ a = Analysis(
         'playwright', 'playwright.async_api', 'playwright._impl',
         # 微信公众号模块依赖
         'driver', 'driver.wx', 'driver.auth', 'driver.success', 'driver.store', 
-        'driver.cookies', 'driver.firefox_driver', 'driver.wxarticle',
-        'selenium', 'selenium.webdriver', 'selenium.webdriver.firefox',
+        'driver.cookies', 'driver.firefox_driver', 'driver.chrome_driver', 'driver.wxarticle',
+        'selenium', 'selenium.webdriver', 'selenium.webdriver.firefox', 'selenium.webdriver.chrome',
         'selenium.webdriver.common.by', 'selenium.webdriver.support',
         'selenium.webdriver.support.ui', 'selenium.webdriver.support.expected_conditions',
+        # WebDriver管理器
+        'webdriver_manager', 'webdriver_manager.chrome', 'webdriver_manager.firefox',
         # 核心依赖
         'asyncio', 'urllib.parse', 'logging', 'PIL', 'PIL.Image',
         'bcrypt', 'passlib', 'passlib.hash', 'passlib.context',
@@ -93,7 +97,12 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    onefile=True,
 )
+
+
+
+
 
 
 

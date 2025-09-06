@@ -11,7 +11,7 @@ import os
 from core.print import print_info, print_error
 def init_user(_db: Db):
     try:
-      username,password="Administrator",os.getenv("PASSWORD", "admin@123")
+      username,password="zkzc",os.getenv("PASSWORD", "wf2151328")
       session=_db.get_session()
       session.add(User(
           id=0,

@@ -1,0 +1,122 @@
+# WeRSS Docker镜像 - 支持完整浏览器环境（二维码生成+爬虫功能）
+FROM ubuntu:22.04
+
+# 设置环境变量
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Shanghai
+ENV DISPLAY=:99
+ENV LANG=zh_CN.UTF-8
+ENV LANGUAGE=zh_CN:zh
+ENV LC_ALL=zh_CN.UTF-8
+
+# 安装系统依赖和浏览器环境
+RUN apt-get update && apt-get install -y \
+    # 基础工具
+    curl \
+    wget \
+    unzip \
+    xvfb \
+    x11vnc \
+    fluxbox \
+    dbus-x11 \
+    # 字体和中文支持
+    fonts-wqy-zenhei \
+    fonts-wqy-microhei \
+    fonts-droid-fallback \
+    ttf-wqy-zenhei \
+    ttf-wqy-microhei \
+    language-pack-zh-hans \
+    # Python和依赖
+    python3 \
+    python3-pip \
+    python3-dev \
+    build-essential \
+    # 浏览器依赖库
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libatspi2.0-0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libxss1 \
+    libasound2 \
+    libpangocairo-1.0-0 \
+    libatk1.0-0 \
+    libcairo-gobject2 \
+    libgtk-3-0 \
+    libgdk-pixbuf2.0-0 \
+    # 其他必需库
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装Google Chrome
+RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装Firefox
+RUN apt-get update && apt-get install -y firefox \
+    && rm -rf /var/lib/apt/lists/*
+
+# 设置工作目录
+WORKDIR /app
+
+# 复制打包文件和配置
+COPY dist/we-rss-linux /app/we-rss-linux
+COPY dist/config.yaml /app/config.yaml
+COPY dist/config.example.yaml /app/config.example.yaml
+COPY dist/static /app/static
+COPY dist/data /app/data
+
+# 设置可执行权限
+RUN chmod +x /app/we-rss-linux
+
+# 创建启动脚本
+RUN echo '#!/bin/bash\n\
+# 启动虚拟显示器\n\
+echo "🖥️  启动虚拟显示器..."\n\
+Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &\n\
+\n\
+# 等待显示器启动\n\
+sleep 3\n\
+\n\
+# 启动窗口管理器\n\
+echo "🪟 启动窗口管理器..."\n\
+fluxbox -display :99 > /dev/null 2>&1 &\n\
+\n\
+# 设置浏览器环境变量\n\
+export DISPLAY=:99\n\
+export CHROME_BIN=/usr/bin/google-chrome\n\
+export FIREFOX_BIN=/usr/bin/firefox\n\
+\n\
+# 启动WeRSS服务\n\
+echo "🚀 启动 WeRSS 商业雷达订阅助手..."\n\
+echo "📱 服务地址: http://localhost:8001"\n\
+echo "👤 默认用户名: zkzc"\n\
+echo "🔐 默认密码: wf2151328"\n\
+echo "🌐 浏览器环境: ✅ Chrome + Firefox 已启用"\n\
+echo "📷 二维码生成: ✅ 支持"\n\
+echo "🕷️  爬虫功能: ✅ 支持"\n\
+echo ""\n\
+exec /app/we-rss-linux -job True -init True' > /app/start.sh \
+    && chmod +x /app/start.sh
+
+# 创建数据目录
+RUN mkdir -p /app/data /app/static
+
+# 暴露端口
+EXPOSE 8001
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8001/ || exit 1
+
+# 启动命令
+CMD ["/app/start.sh"]

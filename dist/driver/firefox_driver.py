@@ -299,22 +299,60 @@ class FirefoxController:
             print(f"驱动配置失败: {str(e)}")
             raise
 
+    def _setup_firefox_binary_path(self):
+        """设置Firefox二进制文件路径 - Linux专用"""
+        if self.system == "linux":
+            # 检查系统Firefox路径
+            firefox_paths = [
+                "/usr/bin/firefox",
+                "/usr/bin/firefox-esr", 
+                "/snap/bin/firefox",
+                "/opt/firefox/firefox"
+            ]
+            
+            for path in firefox_paths:
+                if os.path.exists(path) and os.access(path, os.X_OK):
+                    print(f"使用系统Firefox: {path}")
+                    self.options.binary_location = path
+                    return path
+            
+            # 检查环境变量指定的路径
+            if 'FIREFOX_BINARY' in os.environ:
+                firefox_path = os.environ['FIREFOX_BINARY']
+                if os.path.exists(firefox_path) and os.access(firefox_path, os.X_OK):
+                    print(f"使用环境变量指定的Firefox: {firefox_path}")
+                    self.options.binary_location = firefox_path
+                    return firefox_path
+                    
+            print("警告: 未找到Firefox二进制文件，将使用系统默认")
+            return None
+        return None
+
     def start_browser(self, headless=True):
         """启动浏览器"""
         try:
             self._install_firefox()
             self._setup_driver()
+            
+            # Linux专用：设置Firefox二进制文件路径
+            if self.system == "linux":
+                self._setup_firefox_binary_path()
+            
             self.options.page_load_strategy = "eager"
             if headless:
-                self.options.add_argument("--headless") 
-                pass  
-            if headless and  self.system != "windows":
-                self.options.add_argument("--headless")          # 启用无界面模式
-                self.options.add_argument("--disable-gpu")       # 禁用 GPU 加速
-                self.options.add_argument("--no-sandbox")        # 无沙盒模式（Linux 必需）
-                self.options.add_argument("--disable-dev-shm-usage")  # 解决 Linux 内存不足问题
+                self.options.add_argument("--headless")
+                self.options.add_argument("--disable-gpu")
+                self.options.add_argument("--no-sandbox")
+                self.options.add_argument("--disable-dev-shm-usage")
+                self.options.add_argument("--disable-extensions")
+                self.options.add_argument("--disable-web-security")
+                self.options.add_argument("--allow-running-insecure-content")
             # 隐藏状态栏和任务栏
             self.options.set_preference("toolkit.legacyUserProfileCustomizations.stylesheets", True)  # 允许自定义样式
+            # 添加稳定性配置
+            self.options.set_preference("browser.cache.disk.enable", False)
+            self.options.set_preference("browser.cache.memory.enable", False)
+            self.options.set_preference("network.http.use-cache", False)
 
             service = Service(executable_path=self.driver_path)
             self.driver = webdriver.Firefox(service=service, options=self.options)

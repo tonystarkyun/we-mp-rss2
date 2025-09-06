@@ -158,27 +158,27 @@ class Wx:
                     print(f"二维码图片获取失败: {str(e)}")
         return self.isLock
     def _get_browser_controller(self):
-        """获取可用的浏览器控制器，优先使用Chrome，Firefox作为备选"""
-        # 尝试使用Chrome（优先）
-        try:
-            chrome_controller = ChromeController()
-            if chrome_controller.system == "linux" and chrome_controller._is_chrome_installed_linux():
-                print("检测到Chrome浏览器，使用Chrome进行微信登录（推荐）")
-                return chrome_controller
-        except Exception as e:
-            print(f"Chrome初始化失败: {str(e)}")
-        
-        # Chrome不可用，尝试Firefox
+        """获取可用的浏览器控制器，优先使用Firefox，Chrome作为备选"""
+        # 尝试使用Firefox（更稳定）
         try:
             firefox_controller = FirefoxController()
             if firefox_controller.system == "linux" and firefox_controller._is_firefox_installed_linux():
-                print("使用Firefox进行微信登录")
+                print("检测到Firefox浏览器，使用Firefox进行微信登录（推荐）")
                 return firefox_controller
         except Exception as e:
             print(f"Firefox初始化失败: {str(e)}")
         
+        # Firefox不可用，尝试Chrome
+        try:
+            chrome_controller = ChromeController()
+            if chrome_controller.system == "linux" and chrome_controller._is_chrome_installed_linux():
+                print("使用Chrome进行微信登录")
+                return chrome_controller
+        except Exception as e:
+            print(f"Chrome初始化失败: {str(e)}")
+        
         # 都不可用，抛出异常
-        raise Exception("未检测到可用的浏览器（Chrome或Firefox），请先安装其中一个")
+        raise Exception("未检测到可用的浏览器（Firefox或Chrome），请先安装其中一个")
 
     def wxLogin(self,CallBack=None,NeedExit=False):
         """

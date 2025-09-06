@@ -6,7 +6,12 @@ import os
 
 def main():
     """主启动函数，可被外部调用"""
-    if cfg.args.init=="True":
+    db_path = cfg.get("db", "data/db.db")
+    # 只有数据库不存在时才初始化，或者明确指定强制初始化
+    if cfg.args.init=="True" and not os.path.exists(db_path):
+        import init_sys as init
+        init.init()
+    elif cfg.args.init=="force":
         import init_sys as init
         init.init()
     if  cfg.args.job =="True" and cfg.get("server.enable_job",False):

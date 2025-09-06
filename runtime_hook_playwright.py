@@ -58,6 +58,27 @@ def setup_browser_paths():
         if os.path.exists(chromium_path):
             os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'] = chromium_path
             print(f"Runtime Hook: 设置 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = {chromium_path}")
+        
+        # 设置ChromeDriver路径
+        chromedriver_path = os.path.join(bundle_dir, "chromedriver")
+        if os.path.exists(chromedriver_path):
+            os.environ['CHROMEDRIVER_PATH'] = chromedriver_path
+            print(f"Runtime Hook: 设置 CHROMEDRIVER_PATH = {chromedriver_path}")
+            
+        # 设置WDM缓存路径  
+        wdm_path = os.path.join(bundle_dir, "wdm")
+        if os.path.exists(wdm_path):
+            os.environ['WDM_LOCAL'] = wdm_path
+            print(f"Runtime Hook: 设置 WDM_LOCAL = {wdm_path}")
+            
+        # 设置系统浏览器路径
+        if system == "linux":
+            system_chrome_paths = ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser"]
+            for path in system_chrome_paths:
+                if os.path.exists(path):
+                    os.environ['CHROME_BINARY'] = path
+                    print(f"Runtime Hook: 使用系统Chrome = {path}")
+                    break
 
 # 立即执行设置
 try:
