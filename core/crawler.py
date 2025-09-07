@@ -200,10 +200,15 @@ class LinkCrawler:
                             continue
                             
                         found_urls.add(full_url)
+                        
+                        # 尝试提取发布时间
+                        publish_time = await self._extract_publish_time(page, link)
+                        
                         articles.append({
                             'title': title[:200],  # 限制标题长度
                             'url': full_url,
-                            'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S'), 'publish_time_timestamp': ''
+                            'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+                            'publish_time_timestamp': publish_time
                         })
                         
                     except Exception as e:
@@ -219,7 +224,131 @@ class LinkCrawler:
                 continue
         
         logger.info(f"共提取到 {len(articles)} 篇文章")
+        
+        # 按发布时间降序排序（最新的在前面）
+        articles = await self._sort_articles_by_time(articles)
+        
         return articles
+    
+    async def _extract_publish_time(self, page, link_element) -> str:
+        """尝试提取发布时间"""
+        try:
+            # 尝试在链接附近查找时间信息
+            parent = await link_element.locator('xpath=..').first.element_handle()
+            if parent:
+                # 常见的时间选择器
+                time_selectors = [
+                    'time',
+                    '.date', '.time', '.published', '.post-date', '.publish-time',
+                    '.entry-date', '.article-date', '.news-date',
+                    '[datetime]', '[data-time]', '[data-date]',
+                    '.meta-date', '.timestamp'
+                ]
+                
+                for selector in time_selectors:
+                    try:
+                        time_elem = await parent.query_selector(selector)
+                        if time_elem:
+                            # 尝试获取datetime属性
+                            datetime_attr = await time_elem.get_attribute('datetime')
+                            if datetime_attr:
+                                return self._parse_time_string(datetime_attr)
+                            
+                            # 获取文本内容
+                            time_text = await time_elem.inner_text()
+                            if time_text:
+                                parsed_time = self._parse_time_string(time_text.strip())
+                                if parsed_time:
+                                    return parsed_time
+                    except Exception:
+                        continue
+            
+            return ""  # 无法提取时间时返回空字符串
+            
+        except Exception as e:
+            logger.debug(f"提取发布时间失败: {e}")
+            return ""
+    
+    def _parse_time_string(self, time_str: str) -> str:
+        """解析时间字符串，返回本地时区时间戳"""
+        import re
+        from datetime import datetime, timezone
+        import time
+        
+        if not time_str:
+            return ""
+            
+        try:
+            # 清理时间字符串
+            time_str = re.sub(r'[^\d\-\/:\s年月日时分秒]', '', time_str.strip())
+            
+            # 常见时间格式
+            formats = [
+                '%Y-%m-%d %H:%M:%S',
+                '%Y-%m-%d %H:%M',
+                '%Y-%m-%d',
+                '%Y/%m/%d %H:%M:%S',
+                '%Y/%m/%d %H:%M',
+                '%Y/%m/%d',
+                '%m/%d/%Y',
+                '%d/%m/%Y',
+            ]
+            
+            # 尝试解析时间
+            for fmt in formats:
+                try:
+                    dt = datetime.strptime(time_str, fmt)
+                    timestamp = int(dt.timestamp())
+                    # 确保时间戳有效（不能是0或负数）
+                    if timestamp > 0:
+                        return str(timestamp)
+                except ValueError:
+                    continue
+                    
+            # 处理相对时间（如"2小时前"，"昨天"等）
+            now = datetime.now()
+            if '小时前' in time_str or 'hours ago' in time_str.lower():
+                hours = re.findall(r'\d+', time_str)
+                if hours:
+                    from datetime import timedelta
+                    dt = now - timedelta(hours=int(hours[0]))
+                    timestamp = int(dt.timestamp())
+                    if timestamp > 0:
+                        return str(timestamp)
+            
+            if '天前' in time_str or 'days ago' in time_str.lower():
+                days = re.findall(r'\d+', time_str)
+                if days:
+                    from datetime import timedelta
+                    dt = now - timedelta(days=int(days[0]))
+                    timestamp = int(dt.timestamp())
+                    if timestamp > 0:
+                        return str(timestamp)
+            
+            return ""
+            
+        except Exception as e:
+            logger.debug(f"解析时间字符串失败 '{time_str}': {e}")
+            return ""
+    
+    async def _sort_articles_by_time(self, articles: List[Dict]) -> List[Dict]:
+        """按发布时间排序文章（最新的在前）"""
+        try:
+            def sort_key(article):
+                timestamp = article.get('publish_time_timestamp', '')
+                if timestamp and timestamp.isdigit():
+                    return int(timestamp)
+                return 0  # 无时间信息的排在最后
+            
+            # 按时间戳降序排序
+            sorted_articles = sorted(articles, key=sort_key, reverse=True)
+            
+            logger.info("文章已按发布时间排序")
+            return sorted_articles
+            
+        except Exception as e:
+            logger.warning(f"文章时间排序失败: {e}")
+            return articles  # 排序失败时返回原列表
     
     def _normalize_url(self, href: str, base_url: str) -> Optional[str]:
         """规范化URL"""

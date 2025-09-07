@@ -1,0 +1,98 @@
+app_name: ${APP_NAME:-we-mp-rss}
+server:
+   #服务名称
+   name: ${SERVER_NAME:-we-mp-rss}
+   #前端显示名称
+   web_name: ${WEB_NAME:-商业雷达订阅助手}
+   #过期是否发送授权二维通知 默认True
+   send_code: ${SEND_CODE:-True}
+   #二维通知标题
+   code_title: ${CODE_TITLE:-WeRSS授权二维码}
+   #启动JOB定时任务，默认为True
+   enable_job: ${ENABLE_JOB:-True}
+   #代码修改自动重启服务，默认为False
+   auto_reload: ${AUTO_RELOAD:-False}
+
+#数据库连接 例如db:  mysql+pymysql://<username>:<password>@<host>/we-rss?charset=utf8mb4
+#需要注意数据库连接字符串的格式，如果是sqlite数据库，则使用sqlite:///路径的形式，如果是mysql数据库，
+#则使用mysql+pymysql://<username>:<password>@<host>/<database>?charset=<数据库编码>的形式
+db: ${DB:-sqlite:///data/db.db}
+#通知
+notice:
+  #通知方式，可选dingding、wechat、feishu、custom
+  dingding: "${DINGDING_WEBHOOK}"
+  wechat: "${WECHAT_WEBHOOK}"
+  feishu: "${FEISHU_WEBHOOK}"
+  custom: "${CUSTOM_WEBHOOK}"
+  
+secret: ${SECRET_KEY:-we-mp-rss}
+user_agent: ${USER_AGENT:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36/WeRss}
+
+#定时任务执行每篇稿件间隔时间 单位秒 默认10s 允许值 1-60秒之间
+interval: ${SPAN_INTERVAL:- 10}
+
+webhook:
+  #文章内容的发送格式(默认使用html格式，可选text、markdown)
+  content_format: ${WEBHOOK.CONTENT_FORMAT:-html}
+  
+#API服务端口
+port: ${PORT:-8001}
+#调试模式
+debug: False
+
+#最大页数 第一次添加 采集的页数默认5页
+max_page: ${MAX_PAGE:-5}
+
+rss:
+  #RSS域名地址：如https://www.xxx.com/
+  base_url: ${RSS_BASE_URL:-}
+  #是否为本地RSS链接，默认True，当为False时直接出外部链接
+  local: ${RSS_LOCAL:-False}
+  #RSS标题
+  title: ${RSS_TITLE:-}
+  #RSS描述
+  description: ${RSS_DESCRIPTION:-}
+  #RSS封面
+  cover: ${RSS_COVER:-}
+  #是否显示全文 默认False
+  full_context: ${RSS_FULL_CONTEXT:-True}
+  #是否添加封面图片 默认False
+  add_cover: ${RSS_ADD_COVER:-True}
+  #RSS正文是否启用 CDATA
+  cdata: ${RSS_CDATA:-False}
+  #RSS分页大小 默认10
+  page_size: ${RSS_PAGE_SIZE:-30}
+
+#登录会话有效时长 单位分钟 默认60分钟
+token_expire_minutes: ${TOKEN_EXPIRE_MINUTES:-60}
+
+cache:
+  #缓存目录，默认为./data/cache
+  dir: ${CACHE.DIR:-./data/cache}
+
+article:
+  #是否真实删除文章，默认False，如果为True，则会删除数据库中的记录
+  true_delete: ${ARTICLE.TRUE_DELETE:-False}
+
+gather:
+  #是否采集内容  默认True
+  content: ${GATHER.CONTENT:-True}
+  #采集模式，web模式（可采集到发布链接)，api模式（可采集临时链接），app模式（采集最新消息）
+  model: ${GATHER.MODEL:-app}
+  #是否自动检查未采集文章内容，默认False
+  content_auto_check: ${GATHER.CONTENT_AUTO_CHECK:-False}
+  #自动检查未采集文章内容的时间间隔 单位秒默认59分钟 允许值 1-59分钟之间 默认59分钟
+  content_auto_interval: ${GATHER.CONTENT_AUTO_INTERVAL:-59}
+  #内容修正模式，默认web 允许值 web、api
+  content_mode: ${GATHER.CONTENT_MODE:-web}
+#安全配置
+safe:
+    # 需要隐藏的配置信息，用逗号分隔 如：db,secret,token等 
+    hide_config: "${SAFE_HIDE_CONFIG:-db,secret,token,notice.wechat,notice.feishu,notice.dingding}"
+    # 授权加密KEY
+    lic_key: "${SAFE_LIC_KEY:-RACHELOS}"
+log:
+  #日志文件路径，默认为空字符串，表示不输出到文件。如果要输出到文件，可以指定一个路径如：/var/log/we-mp-rss.log 如果为空就不纪录
+   file: ${LOG_FILE:-./logs/we-rss.log}
+  #日志级别，默认为INFO，可选DEBUG, INFO, WARNING, ERROR, CRITICAL
+   level: ${LOG_LEVEL:-INFO}

@@ -89,7 +89,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='we-rss-linux',
+    name='Business_Radar',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

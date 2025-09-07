@@ -137,7 +137,7 @@ import { getArticles,deleteArticle as deleteArticleApi ,ClearArticle,ClearDuplic
 import { getIndustries, updateIndustries, deleteIndustryApi, exportIndustries as exportIndustriesApi, importIndustries as importIndustriesApi } from '@/api/industry'
 import { inject } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
-import { formatDateTime,formatTimestamp } from '@/utils/date'
+import { formatCrawlerDateTime,formatTimestamp } from '@/utils/date'
 import router from '@/router'
 import TextIcon from '@/components/TextIcon.vue'
 const articles = ref([])
@@ -210,7 +210,7 @@ const columns = [
     width: '140',
     render: ({ record }) => h('span',
       { style: { color: 'var(--color-text-3)', fontSize: '12px' } },
-      formatDateTime(record.created_at)
+      formatCrawlerDateTime(record.created_at)
     )
   },
   {
@@ -428,7 +428,7 @@ const viewArticle = async (_record: any) => {
     currentArticle.value = {
       title: record.title,
       content: processedContent,
-      time: formatDateTime(record.created_at),
+      time: formatCrawlerDateTime(record.created_at),
       url: record.url
     }
     articleModalVisible.value = true
@@ -436,7 +436,7 @@ const viewArticle = async (_record: any) => {
     currentArticle.value = {
       title: record.title,
       content: source_tpl,
-      time: formatDateTime(record.created_at),
+      time: formatCrawlerDateTime(record.created_at),
       url: record.url
     }
     articleModalVisible.value = true

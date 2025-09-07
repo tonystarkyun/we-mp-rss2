@@ -28,6 +28,11 @@ if level=="CRITICAL":
 if len(log_filer)<=0:
     handler = logging.NullHandler()
 else:
+    # 确保日志目录存在
+    import os
+    log_dir = os.path.dirname(f'{log_filer}.log')
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
     handler = RotatingFileHandler(f'{log_filer}.log', maxBytes=1024*1024, backupCount=7)
 handler.setLevel(logging.DEBUG)
 
