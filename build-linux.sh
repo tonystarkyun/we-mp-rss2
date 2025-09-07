@@ -180,7 +180,7 @@ echo "按 Ctrl+C 停止服务"
 echo "=============================="
 
 # 启动应用
-./Business_Radar
+./Business_Radar -init True
 EOF
         chmod +x dist/start.sh
         
