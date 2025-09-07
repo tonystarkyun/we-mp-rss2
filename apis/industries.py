@@ -123,7 +123,7 @@ async def add_industry(
                     industry_id=new_industry.id,
                     title=article.get('title', ''),
                     url=article.get('url', ''),
-                    publish_time=int(datetime.now().timestamp()),
+                    publish_time=article.get("publish_time_timestamp", ""),
                     status=1
                 )
                 session.add(industry_article)

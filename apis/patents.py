@@ -123,7 +123,7 @@ async def add_patent(
                     patent_id=new_patent.id,
                     title=article.get('title', ''),
                     url=article.get('url', ''),
-                    publish_time=int(datetime.now().timestamp()),
+                    publish_time=article.get("publish_time_timestamp", ""),
                     status=1
                 )
                 session.add(patent_article)
@@ -240,7 +240,7 @@ async def update_patent_content(
                     patent_id=patent_id,
                     title=article.get('title', ''),
                     url=article.get('url', ''),
-                    publish_time=int(datetime.now().timestamp()),
+                    publish_time=article.get("publish_time_timestamp", ""),
                     status=1
                 )
                 session.add(patent_article)

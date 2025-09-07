@@ -124,7 +124,7 @@ async def add_link(
                     title=article.get('title', ''),
                     url=article.get('url', ''),
                     description=article.get('title', ''),  # 暂时用title作为描述
-                    publish_time=int(datetime.now().timestamp()),
+                    publish_time=article.get("publish_time_timestamp", ""),
                     status=1
                 )
                 session.add(link_article)
@@ -291,7 +291,7 @@ async def update_link_content(
                     link_id=link_id,
                     title=article.get('title', ''),
                     url=article.get('url', ''),
-                    publish_time=int(datetime.now().timestamp()),
+                    publish_time=article.get("publish_time_timestamp", ""),
                     status=1
                 )
                 session.add(link_article)

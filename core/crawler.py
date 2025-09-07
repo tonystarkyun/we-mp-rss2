@@ -203,7 +203,7 @@ class LinkCrawler:
                         articles.append({
                             'title': title[:200],  # 限制标题长度
                             'url': full_url,
-                            'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S')
+                            'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S'), 'publish_time_timestamp': ''
                         })
                         
                     except Exception as e:
