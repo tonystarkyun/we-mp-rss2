@@ -219,11 +219,38 @@ async def delete_link(
                 message="链接不存在"
             )
         
-        # 删除链接
+        # 先删除该链接下的所有文章
+        articles = session.query(LinkArticle).filter(LinkArticle.link_id == link_id).all()
+        for article in articles:
+            session.delete(article)
+        
+        # 再删除链接本身
         session.delete(link)
         session.commit()
         
-        return success_response({"message": "链接删除成功"})
+        # 清理缓存文件 (RSS缓存等)
+        try:
+            from core.rss import RSS
+            rss = RSS()
+            rss.clear_cache(mp_id=link_id)
+            print(f"已清理链接 {link_id} 的RSS缓存")
+        except Exception as cache_error:
+            print(f"清理缓存文件时出错: {cache_error}")
+        
+        # 清理头像文件 (如果有)
+        try:
+            import os
+            if link.avatar and link.avatar != "/static/logo.svg" and os.path.exists(link.avatar):
+                os.remove(link.avatar)
+                print(f"已删除头像文件: {link.avatar}")
+        except Exception as file_error:
+            print(f"清理头像文件时出错: {file_error}")
+        
+        return success_response({
+            "message": "链接及其文章删除成功",
+            "id": link_id,
+            "deleted_articles_count": len(articles)
+        })
     except Exception as e:
         session.rollback()
         print(f"删除链接错误: {str(e)}")

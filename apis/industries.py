@@ -169,11 +169,38 @@ async def delete_industry(
                 message="行业动态链接不存在"
             )
         
-        # 删除行业动态链接
+        # 先删除该行业动态链接下的所有文章
+        articles = session.query(IndustryArticle).filter(IndustryArticle.industry_id == industry_id).all()
+        for article in articles:
+            session.delete(article)
+        
+        # 再删除行业动态链接本身
         session.delete(industry)
         session.commit()
         
-        return success_response({"message": "行业动态链接删除成功"})
+        # 清理缓存文件 (RSS缓存等)
+        try:
+            from core.rss import RSS
+            rss = RSS()
+            rss.clear_cache(mp_id=industry_id)
+            print(f"已清理行业动态链接 {industry_id} 的RSS缓存")
+        except Exception as cache_error:
+            print(f"清理缓存文件时出错: {cache_error}")
+        
+        # 清理头像文件 (如果有)
+        try:
+            import os
+            if industry.avatar and industry.avatar != "/static/logo.svg" and os.path.exists(industry.avatar):
+                os.remove(industry.avatar)
+                print(f"已删除头像文件: {industry.avatar}")
+        except Exception as file_error:
+            print(f"清理头像文件时出错: {file_error}")
+        
+        return success_response({
+            "message": "行业动态链接及其文章删除成功",
+            "id": industry_id,
+            "deleted_articles_count": len(articles)
+        })
     except Exception as e:
         session.rollback()
         print(f"删除行业动态链接错误: {str(e)}")

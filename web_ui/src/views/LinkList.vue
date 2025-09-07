@@ -137,10 +137,7 @@
           </template>
           <template #actions="{ record }">
             <a-space>
-              <a-button type="text" @click="viewArticle(record)" :title="record.id">
-                <template #icon><icon-eye /></template>
-              </a-button>
-              <a-button type="text" status="danger" @click="deleteArticle(record.id)">
+              <a-button type="text" status="danger" @click="deleteArticle(record.id)" title="删除文章">
                 <template #icon><icon-delete /></template>
               </a-button>
             </a-space>
