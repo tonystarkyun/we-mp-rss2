@@ -396,10 +396,11 @@ const handleRefresh = () => {
   }).then(() => {
     Message.success('刷新成功')
     refreshModalVisible.value = false
+    // 爬取完成后刷新文章列表
+    return fetchArticles()
   }).finally(() => {
     fullLoading.value = false
   })
-  fetchArticles()
 }
 
 const refresh = () => {

@@ -221,9 +221,77 @@ async def update_industry_content(
     end_page: int = Query(1, description="结束页数"),
     current_user: dict = Depends(get_current_user)
 ):
+    session = DB.get_session()
     try:
-        return success_response({"message": f"行业动态{industry_id}内容更新成功"})
+        # 查找行业动态链接
+        industry = session.query(Industry).filter(Industry.id == industry_id).first()
+        if not industry:
+            return error_response(
+                code=40004,
+                message="行业动态链接不存在"
+            )
+        
+        print(f"开始更新行业动态内容: {industry.name} ({industry.url})")
+        
+        # 计算需要爬取的文章数量（简单实现，每页10篇文章）
+        articles_per_page = 10
+        max_articles = (end_page - start_page + 1) * articles_per_page
+        
+        # 重新爬取网站内容
+        crawl_result = await crawl_website(industry.url, max_articles=max_articles)
+        
+        if not crawl_result['success']:
+            return error_response(
+                code=50007,
+                message=f"爬取失败: {crawl_result.get('error', '未知错误')}"
+            )
+        
+        # 保存新爬取的文章
+        new_articles_count = 0
+        if crawl_result['articles']:
+            import time
+            for i, article in enumerate(crawl_result['articles']):
+                # 检查文章是否已存在（通过URL去重）
+                existing = session.query(IndustryArticle).filter(
+                    IndustryArticle.industry_id == industry_id,
+                    IndustryArticle.url == article.get('url', '')
+                ).first()
+                
+                if existing:
+                    continue  # 跳过已存在的文章
+                
+                # 生成唯一ID
+                unique_id = f"{industry_id}_{int(datetime.now().timestamp())}_{i}"
+                industry_article = IndustryArticle(
+                    id=unique_id,
+                    industry_id=industry_id,
+                    title=article.get('title', ''),
+                    url=article.get('url', ''),
+                    publish_time=article.get("publish_time_timestamp", ""),
+                    status=1
+                )
+                session.add(industry_article)
+                new_articles_count += 1
+                time.sleep(0.001)
+        
+        # 更新行业动态链接的文章数量和更新时间
+        total_articles = session.query(IndustryArticle).filter(
+            IndustryArticle.industry_id == industry_id,
+            IndustryArticle.status != 1000
+        ).count()
+        industry.article_count = total_articles
+        
+        session.commit()
+        
+        print(f"行业动态更新完成: 新增{new_articles_count}篇文章，总计{total_articles}篇文章")
+        
+        return success_response({
+            "message": f"行业动态内容更新成功",
+            "new_articles": new_articles_count,
+            "total_articles": total_articles
+        })
     except Exception as e:
+        session.rollback()
         print(f"更新行业动态内容错误: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -232,6 +300,8 @@ async def update_industry_content(
                 message=f"更新行业动态内容失败: {str(e)}",
             )
         )
+    finally:
+        session.close()
 
 class CrawlTestRequest(BaseModel):
     url: str
