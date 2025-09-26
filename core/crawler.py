@@ -8,6 +8,7 @@ import shutil
 import json
 from typing import List, Dict, Optional
 from urllib.parse import urljoin, urlparse, parse_qs, urlencode, unquote_plus
+import re
 import logging
 
 logger = logging.getLogger(__name__)
@@ -597,6 +598,129 @@ class LinkCrawler:
             logger.warning("Failed to parse Statista search results: %s", exc)
             return articles
 
+
+    async def _solve_panda_slider(self, page) -> bool:
+        """Attempt to bypass Panda985 slider challenge."""
+        try:
+            slider = await page.wait_for_selector('.slider', timeout=5000)
+        except Exception:
+            return False
+
+        try:
+            handler = await page.wait_for_selector('#slider .handler', timeout=2000)
+        except Exception:
+            return False
+
+        slider_box = await slider.bounding_box()
+        handler_box = await handler.bounding_box()
+        if not slider_box or not handler_box:
+            return False
+
+        await page.wait_for_timeout(500)
+
+        start_x = handler_box['x'] + handler_box['width'] / 2
+        start_y = handler_box['y'] + handler_box['height'] / 2
+        max_travel = slider_box['width'] - handler_box['width']
+        if max_travel <= 0:
+            return False
+        target_x = start_x + max_travel
+        mid_x = start_x + max_travel * 0.82
+
+        try:
+            await page.mouse.move(start_x, start_y)
+            await page.mouse.down()
+            await page.mouse.move(mid_x, start_y, steps=15)
+            await page.wait_for_timeout(120)
+            await page.mouse.move(target_x, start_y, steps=10)
+            await page.mouse.up()
+        except Exception as exc:
+            logger.debug('Failed to simulate Panda985 slider drag: %s', exc)
+            return False
+
+        try:
+            await page.wait_for_load_state('networkidle', timeout=8000)
+        except Exception:
+            await page.wait_for_timeout(2000)
+
+        try:
+            await page.wait_for_selector('#gs_res_ccl', timeout=6000)
+            return True
+        except Exception:
+            return False
+
+    async def _extract_panda985_scholar(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
+        """Special handling for Panda985 scholar search pages."""
+        articles: List[Dict[str, str]] = []
+
+        slider_passed = await self._solve_panda_slider(page)
+        if slider_passed:
+            try:
+                await page.wait_for_selector('#gs_res_ccl .gs_r', timeout=8000)
+            except Exception:
+                logger.debug('Panda985 results failed to appear after slider resolution')
+                return articles
+        else:
+            try:
+                await page.wait_for_selector('#gs_res_ccl .gs_r', timeout=8000)
+            except Exception:
+                return articles
+
+        raw_items = await page.evaluate("""() => {
+            return Array.from(document.querySelectorAll('#gs_res_ccl .gs_r.gs_or')).map(node => {
+                const titleLink = node.querySelector('h3.gs_rt a');
+                const titleText = titleLink ? titleLink.innerText : (node.querySelector('h3.gs_rt')?.innerText || '');
+                return {
+                    title: titleText.trim(),
+                    url: titleLink ? titleLink.href : '',
+                    summary: (node.querySelector('.gs_rs')?.innerText || '').trim(),
+                    meta: (node.querySelector('.gs_a')?.innerText || '').trim(),
+                    badge: (node.querySelector('.gs_ctg2')?.innerText || '').trim(),
+                    pdf: (node.querySelector('.gs_ggsd a')?.href || '').trim()
+                };
+            }).filter(item => item.title && item.url);
+        }""")
+
+        seen_urls = set()
+        for item in raw_items:
+            if len(articles) >= max_articles:
+                break
+
+            url = (item.get('url') or '').strip()
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            title = (item.get('title') or url).strip()
+            summary = ' '.join((item.get('summary') or '').split())
+            meta = ' '.join((item.get('meta') or '').split())
+
+            article: Dict[str, str] = {
+                'title': title[:200],
+                'url': url,
+                'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S')
+            }
+
+            if summary:
+                article['summary'] = summary[:500]
+
+            if meta:
+                article['source'] = meta
+                match = re.search(r'(19|20)\d{2}', meta)
+                if match:
+                    article['published_at'] = match.group(0)
+
+            badge = (item.get('badge') or '').strip()
+            if badge:
+                article['type'] = badge
+
+            pdf_url = (item.get('pdf') or '').strip()
+            if pdf_url:
+                article['pdf_url'] = pdf_url
+
+            articles.append(article)
+
+        return articles
+
     def _build_statista_url(self, item: Dict, entity_name: Optional[str]) -> Optional[str]:
         """根据实体类型构建 Statista 详情页地址"""
         if not item:
@@ -656,6 +780,11 @@ class LinkCrawler:
             reuters_articles = await self._extract_reuters_search(page, base_url, max_articles)
             if reuters_articles:
                 return reuters_articles
+
+        if parsed_url.netloc.endswith('panda985.com') and parsed_url.path.startswith('/scholar'):
+            panda_articles = await self._extract_panda985_scholar(page, base_url, max_articles)
+            if panda_articles:
+                return panda_articles
 
         if parsed_url.netloc.endswith('statista.com') and parsed_url.path.startswith('/search'):
             statista_articles = await self._extract_statista_search(page, base_url, max_articles)
