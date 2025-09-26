@@ -45,13 +45,18 @@ class LinkCrawler:
         
         try:
             async with async_playwright() as p:
+                parsed_target_url = urlparse(url)
+                target_headless = self.headless
+                if parsed_target_url.netloc.endswith('reuters.com') and target_headless:
+                    target_headless = False
+                    logger.info('Reuters domain detected; switching to headful mode to satisfy anti-bot checks')
                 # 根据环境选择浏览器启动方??
                 if self.browser_executable:
                     # 使用系统浏览??
                     logger.info("Using system browser: %s", self.browser_executable)
                     browser = await p.chromium.launch(
                         executable_path=self.browser_executable,
-                        headless=self.headless,
+                        headless=target_headless,
                         args=[
                             '--no-sandbox',
                             '--disable-dev-shm-usage',
@@ -62,7 +67,7 @@ class LinkCrawler:
                 else:
                     # 使用Playwright内置浏览??
                     logger.info("Using bundled Playwright browser")
-                    browser = await p.chromium.launch(headless=self.headless)
+                    browser = await p.chromium.launch(headless=target_headless)
                 
                 context = await browser.new_context(
                     user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -177,6 +182,105 @@ class LinkCrawler:
             
         return info
     
+    async def _extract_reuters_search(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
+        """Special handling for Reuters site search pages."""
+        articles: List[Dict[str, str]] = []
+        parsed = urlparse(base_url)
+        query_params = parse_qs(parsed.query)
+
+        keyword = ''
+        for key in ('query', 'blob'):
+            values = query_params.get(key)
+            if values:
+                keyword = (values[0] or '').strip()
+                if keyword:
+                    break
+
+        if not keyword:
+            return articles
+
+        size = max(1, min(max_articles, 20))
+        payload = {
+            'keyword': keyword,
+            'offset': 0,
+            'orderby': 'display_date:desc',
+            'size': size,
+            'website': 'reuters'
+        }
+
+        fetch_script = """async ({url, payload}) => {
+            const params = new URLSearchParams();
+            params.set('query', JSON.stringify(payload));
+            params.set('d', '318');
+            params.set('mxId', '00000000');
+            params.set('_website', 'reuters');
+            const response = await fetch(`${url}?${params.toString()}`, {
+                credentials: 'include',
+                headers: {
+                    'Accept': 'application/json, text/plain, */*',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+            return { status: response.status, text: await response.text() };
+        }"""
+
+        try:
+            fetch_result = await page.evaluate(fetch_script, {
+                'url': 'https://www.reuters.com/pf/api/v3/content/fetch/articles-by-search-v2',
+                'payload': payload
+            })
+        except Exception as exc:
+            logger.warning('Failed to query Reuters search API via page context: %s', exc)
+            return articles
+
+        status = fetch_result.get('status') if isinstance(fetch_result, dict) else None
+        if status != 200:
+            logger.warning('Reuters search API returned non-200 response: %s', status)
+            return articles
+
+        raw_text = (fetch_result.get('text') or '').strip()
+        if not raw_text:
+            return articles
+
+        try:
+            data = json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            logger.warning('Failed to decode Reuters search payload: %s', exc)
+            return articles
+
+        items = data.get('result', {}).get('articles') or []
+        base_domain = 'https://www.reuters.com'
+
+        for item in items:
+            if len(articles) >= max_articles:
+                break
+
+            title = (item.get('title') or item.get('headline') or '').strip()
+            description = (item.get('description') or '').strip()
+            if not title and description:
+                title = description[:200]
+
+            url_path = (item.get('canonical_url') or item.get('url') or '').strip()
+            if not url_path:
+                continue
+
+            if url_path.startswith('http'):
+                article_url = url_path
+            else:
+                article_url = urljoin(base_domain, url_path)
+
+            if not title:
+                title = article_url
+
+            articles.append({
+                'title': title[:200],
+                'url': article_url,
+                'published_at': item.get('published_time'),
+                'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S')
+            })
+
+        return articles
+
     async def _extract_statista_search(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
         """专门处理 Statista 搜索结果页"""
         articles: List[Dict[str, str]] = []
@@ -306,6 +410,11 @@ class LinkCrawler:
         articles = []
         
         parsed_url = urlparse(base_url)
+
+        if parsed_url.netloc.endswith('reuters.com'):
+            reuters_articles = await self._extract_reuters_search(page, base_url, max_articles)
+            if reuters_articles:
+                return reuters_articles
         if parsed_url.netloc.endswith('statista.com') and parsed_url.path.startswith('/search'):
             statista_articles = await self._extract_statista_search(page, base_url, max_articles)
             if statista_articles:
