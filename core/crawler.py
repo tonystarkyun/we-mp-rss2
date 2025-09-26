@@ -669,15 +669,19 @@ class LinkCrawler:
             return Array.from(document.querySelectorAll('#gs_res_ccl .gs_r.gs_or')).map(node => {
                 const titleLink = node.querySelector('h3.gs_rt a');
                 const titleText = titleLink ? titleLink.innerText : (node.querySelector('h3.gs_rt')?.innerText || '');
+                const downloadLink = node.querySelector('.down_sci');
+                const clusterLink = node.querySelector('a.gs_nph[href*="cluster="]');
                 return {
                     title: titleText.trim(),
                     url: titleLink ? titleLink.href : '',
                     summary: (node.querySelector('.gs_rs')?.innerText || '').trim(),
                     meta: (node.querySelector('.gs_a')?.innerText || '').trim(),
                     badge: (node.querySelector('.gs_ctg2')?.innerText || '').trim(),
-                    pdf: (node.querySelector('.gs_ggsd a')?.href || '').trim()
+                    pdf: (node.querySelector('.gs_ggsd a')?.href || '').trim(),
+                    download: downloadLink ? (downloadLink.getAttribute('data-gp') || downloadLink.getAttribute('href') || '') : '',
+                    cluster: clusterLink ? clusterLink.getAttribute('href') : ''
                 };
-            }).filter(item => item.title && item.url);
+            }).filter(item => item.title);
         }""")
 
         seen_urls = set()
@@ -686,6 +690,17 @@ class LinkCrawler:
                 break
 
             url = (item.get('url') or '').strip()
+            if not url:
+                download_url = (item.get('download') or '').strip()
+                if download_url:
+                    if download_url.startswith('http'):
+                        url = download_url
+                    else:
+                        url = urljoin(base_url, download_url)
+            if not url:
+                cluster_url = (item.get('cluster') or '').strip()
+                if cluster_url:
+                    url = urljoin(base_url, cluster_url)
             if not url or url in seen_urls:
                 continue
             seen_urls.add(url)
@@ -716,6 +731,98 @@ class LinkCrawler:
             pdf_url = (item.get('pdf') or '').strip()
             if pdf_url:
                 article['pdf_url'] = pdf_url
+
+            articles.append(article)
+
+        return articles
+
+    async def _extract_google_scholar(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
+        """Special handling for Google Scholar search pages."""
+        articles: List[Dict[str, str]] = []
+
+        try:
+            await page.wait_for_selector('#gs_res_ccl .gs_r', timeout=8000)
+        except Exception:
+            captcha_node = await page.query_selector('form#captcha-form, iframe[src*="recaptcha"], #recaptcha')
+            if captcha_node:
+                logger.warning('Google Scholar presented captcha; aborting extraction')
+            else:
+                logger.debug('Google Scholar results failed to appear in time')
+            return articles
+
+        raw_items = await page.evaluate("""() => {
+            const rows = Array.from(document.querySelectorAll('#gs_res_ccl .gs_r.gs_or'));
+            return rows.map(node => {
+                const titleLink = node.querySelector('h3.gs_rt a');
+                const titleText = titleLink ? titleLink.innerText : (node.querySelector('h3.gs_rt')?.innerText || '');
+                const pdfLink = node.querySelector('.gs_or_ggsm a, .gs_or_ggsb a');
+                const actionLinks = Array.from(node.querySelectorAll('.gs_fl a'));
+                const citeLink = actionLinks.find(link => /Cited by/i.test(link.innerText));
+                const relatedLink = actionLinks.find(link => /Related articles/i.test(link.innerText));
+                return {
+                    title: titleText.trim(),
+                    url: titleLink ? titleLink.href : '',
+                    summary: (node.querySelector('.gs_rs')?.innerText || '').trim(),
+                    meta: (node.querySelector('.gs_a')?.innerText || '').trim(),
+                    pdf: pdfLink ? pdfLink.href : '',
+                    citeText: citeLink ? citeLink.innerText.trim() : '',
+                    citeUrl: citeLink ? citeLink.href : '',
+                    relatedUrl: relatedLink ? relatedLink.href : ''
+                };
+            }).filter(item => item.title);
+        }""")
+
+        seen_urls = set()
+        base = 'https://scholar.google.com'
+
+        for item in raw_items:
+            if len(articles) >= max_articles:
+                break
+
+            url = (item.get('url') or '').strip()
+            if not url:
+                continue
+            if url.startswith('/'):
+                url = urljoin(base, url)
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            title = (item.get('title') or url).strip()
+            summary = ' '.join((item.get('summary') or '').split())
+            meta = ' '.join((item.get('meta') or '').split())
+
+            article: Dict[str, str] = {
+                'title': title[:200],
+                'url': url,
+                'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S')
+            }
+
+            if summary:
+                article['summary'] = summary[:500]
+
+            if meta:
+                article['source'] = meta
+                year_match = re.search(r'(19|20)\d{2}', meta)
+                if year_match:
+                    article['published_at'] = year_match.group(0)
+
+            pdf_url = (item.get('pdf') or '').strip()
+            if pdf_url:
+                article['pdf_url'] = pdf_url if pdf_url.startswith('http') else urljoin(base, pdf_url)
+
+            cite_text = (item.get('citeText') or '').strip()
+            if cite_text:
+                m = re.search(r'(\d+)', cite_text)
+                if m:
+                    article['citations'] = int(m.group(1))
+                cite_url = (item.get('citeUrl') or '').strip()
+                if cite_url:
+                    article['citations_url'] = cite_url if cite_url.startswith('http') else urljoin(base, cite_url)
+
+            related_url = (item.get('relatedUrl') or '').strip()
+            if related_url:
+                article['related_url'] = related_url if related_url.startswith('http') else urljoin(base, related_url)
 
             articles.append(article)
 
@@ -785,6 +892,11 @@ class LinkCrawler:
             panda_articles = await self._extract_panda985_scholar(page, base_url, max_articles)
             if panda_articles:
                 return panda_articles
+
+        if parsed_url.netloc.endswith('google.com') and parsed_url.path.startswith('/scholar'):
+            google_articles = await self._extract_google_scholar(page, base_url, max_articles)
+            if google_articles:
+                return google_articles
 
         if parsed_url.netloc.endswith('statista.com') and parsed_url.path.startswith('/search'):
             statista_articles = await self._extract_statista_search(page, base_url, max_articles)
