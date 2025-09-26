@@ -139,8 +139,18 @@ const rules = {
     { required: true, message: '请输入行业网站URL' },
     {
       validator: (value, callback) => {
-        if (value && !value.match(/^https?:\/\/.+/)) {
-          callback('请输入有效的URL（以http://或https://开头）')
+        if (value) {
+          try {
+            // 使用更严格的URL验证
+            const url = new URL(value)
+            if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+              callback('请输入有效的URL（以http://或https://开头）')
+            } else {
+              callback()
+            }
+          } catch (error) {
+            callback('请输入有效的URL格式')
+          }
         } else {
           callback()
         }
@@ -235,8 +245,14 @@ const handleSubmit = async (e) => {
       return
     }
     
-    if (!form.value.url.match(/^https?:\/\/.+/)) {
-      Message.error('请输入有效的URL（以http://或https://开头）')
+    try {
+      const url = new URL(form.value.url)
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        Message.error('请输入有效的URL（以http://或https://开头）')
+        return
+      }
+    } catch (error) {
+      Message.error('请输入有效的URL格式')
       return
     }
     

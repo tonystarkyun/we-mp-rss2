@@ -5,8 +5,9 @@ import time
 import os
 import sys
 import shutil
+import json
 from typing import List, Dict, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, parse_qs, urlencode
 import logging
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ class LinkCrawler:
         
     async def crawl_website_articles(self, url: str, max_articles: int = 50) -> Dict:
         """
-        爬取网站的文章列表
+        爬取网站的文章列??
         
         Args:
             url: 目标网站URL
@@ -44,10 +45,10 @@ class LinkCrawler:
         
         try:
             async with async_playwright() as p:
-                # 根据环境选择浏览器启动方式
+                # 根据环境选择浏览器启动方??
                 if self.browser_executable:
-                    # 使用系统浏览器
-                    logger.info(f"使用系统浏览器: {self.browser_executable}")
+                    # 使用系统浏览??
+                    logger.info("Using system browser: %s", self.browser_executable)
                     browser = await p.chromium.launch(
                         executable_path=self.browser_executable,
                         headless=self.headless,
@@ -59,8 +60,8 @@ class LinkCrawler:
                         ]
                     )
                 else:
-                    # 使用Playwright内置浏览器
-                    logger.info("使用Playwright内置浏览器")
+                    # 使用Playwright内置浏览??
+                    logger.info("Using bundled Playwright browser")
                     browser = await p.chromium.launch(headless=self.headless)
                 
                 context = await browser.new_context(
@@ -68,7 +69,7 @@ class LinkCrawler:
                 )
                 page = await context.new_page()
                 
-                logger.info(f"正在爬取网站: {url}")
+                logger.info("Crawling site: %s", url)
                 await page.goto(url, wait_until="domcontentloaded", timeout=self.timeout)
                 
                 # 等待页面加载
@@ -93,38 +94,38 @@ class LinkCrawler:
                 await browser.close()
                 
         except Exception as e:
-            logger.error(f"爬取网站时发生错误: {str(e)}")
+            logger.error("Error while crawling: %s", e)
             result['error'] = str(e)
             
         return result
     
     def _find_browser_executable(self) -> Optional[str]:
-        """查找可用的浏览器可执行文件"""
+        """Locate an available browser executable on the host."""
         
         # 如果是PyInstaller环境，优先查找系统安装的Chrome
         if hasattr(sys, '_MEIPASS'):
-            logger.info("检测到PyInstaller环境，查找系统浏览器")
+            logger.info("Detected PyInstaller environment, searching for system browser")
             
             # Windows Chrome路径
             chrome_paths = [
                 r"C:\Program Files\Google\Chrome\Application\chrome.exe",
                 r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
                 os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe"),
-                # Edge浏览器作为备选
+                # Edge浏览器作为备??
                 r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
                 r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
             ]
             
             for chrome_path in chrome_paths:
                 if os.path.exists(chrome_path):
-                    logger.info(f"找到浏览器: {chrome_path}")
+                    logger.info("Found browser executable: %s", chrome_path)
                     return chrome_path
             
-            logger.warning("未找到系统安装的Chrome或Edge浏览器")
+            logger.warning("No system Chrome or Edge browser found")
             return None
         
         # 开发环境使用Playwright自带的浏览器
-        logger.info("开发环境，使用Playwright内置浏览器")
+        logger.info("Development environment detected; using bundled Playwright browser")
         return None
     
     async def _handle_cookie_consent(self, page):
@@ -172,27 +173,157 @@ class LinkCrawler:
                     info['description'] = description.strip()
                     
         except Exception as e:
-            logger.warning(f"提取网站信息时出错: {e}")
+            logger.warning("Error extracting site info: %s", e)
             
         return info
     
+    async def _extract_statista_search(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
+        """专门处理 Statista 搜索结果页"""
+        articles: List[Dict[str, str]] = []
+        parsed = urlparse(base_url)
+        query_params = parse_qs(parsed.query)
+
+        # 构建请求参数，保留原有查询条件并强制返回 JSON
+        api_params = [('asJsonResponse', '1')]
+        for key, values in query_params.items():
+            for value in values:
+                if value is not None:
+                    api_params.append((key, value))
+
+        # Statista 接口在缺少部分参数时会回退默认值，这里补齐关键参数
+        defaults = {
+            'q': '',
+            'p': '1',
+            'sortMethod': 'relevance',
+            'accuracy': 'and',
+            'interval': '0',
+            'idRelevance': '0',
+            'isRegionPref': '-1',
+            'isoregion': '0',
+            'language': '0',
+        }
+        existing_keys = {key for key, _ in api_params}
+        for key, value in defaults.items():
+            if key not in existing_keys:
+                api_params.append((key, value))
+
+        try:
+            query_string = urlencode(api_params, doseq=True)
+            target_url = f"https://www.statista.com/search/?{query_string}"
+            fetch_result = await page.evaluate(
+                "async (targetUrl) => {\n                    const response = await fetch(targetUrl, {\n                        headers: {\n                            'Accept': 'application/json, text/plain, */*',\n                            'X-Requested-With': 'XMLHttpRequest'\n                        },\n                        credentials: 'include'\n                    });\n                    const text = await response.text();\n                    return { status: response.status, text };\n                }",
+                target_url
+            )
+            status = fetch_result.get('status') if fetch_result else None
+            if status != 200:
+                logger.warning("Statista API non-2xx response: %s", status)
+                return articles
+
+            raw_text = (fetch_result.get('text') or '').strip()
+            if not raw_text:
+                return articles
+
+            data = json.loads(raw_text)
+            results = data.get('results', {})
+            main_results = results.get('mainselect') or []
+            entity_ids = data.get('justSmart', {}).get('actionParameters', {}).get('entityIds', {})
+            id_to_name = {str(v): k for k, v in entity_ids.items()}
+
+            for item in main_results:
+                if len(articles) >= max_articles:
+                    break
+
+                identity = str(item.get('identity') or '')
+                entity_name = id_to_name.get(identity)
+                article_url = self._build_statista_url(item, entity_name)
+                if not article_url:
+                    continue
+
+                title_fields = [
+                    item.get('graphheader'),
+                    item.get('pagetitle'),
+                    item.get('catchline'),
+                    item.get('title'),
+                    item.get('pseudotitle'),
+                    item.get('subtitle'),
+                ]
+                title = next((t.strip() for t in title_fields if t), None)
+                if not title:
+                    title = article_url
+
+                articles.append({
+                    'title': title[:200],
+                    'url': article_url,
+                    'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S')
+                })
+
+            return articles
+        except Exception as exc:
+            logger.warning("Failed to parse Statista search results: %s", exc)
+            return articles
+
+    def _build_statista_url(self, item: Dict, entity_name: Optional[str]) -> Optional[str]:
+        """根据实体类型构建 Statista 详情页地址"""
+        if not item:
+            return None
+
+        slug = (item.get('uri') or item.get('url') or '').strip('/')
+        if not slug:
+            return None
+
+        idcontent = item.get('idcontent')
+        base = 'https://www.statista.com'
+
+        entity_to_path = {
+            'statistic': 'statistics',
+            'forecast': 'statistics',
+            'infographic': 'infographic',
+            'topic': 'topics',
+            'study': 'study',
+            'dossier': 'study',
+            'dossierplus': 'study',
+            'toplist': 'study',
+            'survey': 'study',
+            'marketstudy': 'study',
+            'branchreport': 'study',
+            'brandreport': 'study',
+            'companyreport': 'study',
+            'countryreport': 'study',
+        }
+
+        path_prefix = entity_to_path.get(entity_name)
+        if path_prefix and idcontent:
+            return f"{base}/{path_prefix}/{idcontent}/{slug}/"
+
+        # 回退到直接拼接 slug
+        if slug.startswith('http'):
+            return slug
+
+        return f"{base}/{slug}/"
+
     async def _extract_articles(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
         """提取文章列表"""
         articles = []
         
-        # 通用文章选择器策略（按优先级排序）
+        parsed_url = urlparse(base_url)
+        if parsed_url.netloc.endswith('statista.com') and parsed_url.path.startswith('/search'):
+            statista_articles = await self._extract_statista_search(page, base_url, max_articles)
+            if statista_articles:
+                return statista_articles
+        
+        # 通用文章选择器策略（按优先级排序??
         selectors = [
-            # 新闻和博客网站常用选择器
+            # 新闻和博客网站常用选择??
             'article h1 a, article h2 a, article h3 a',
             'article a[href]',
             '.post-title a, .entry-title a',
             '.article-title a, .news-title a',
             'h1 a, h2 a, h3 a',
             '.title a',
-            # 列表页面选择器
+            # 列表页面选择??
             'li a[href]',
             'ul a[href]',
-            # 通用链接选择器
+            # 通用链接选择??
             'a[href*="/article/"], a[href*="/post/"], a[href*="/news/"]',
             'a[href*="blog"], a[href*="story"]',
             'a[title][href]'
@@ -207,7 +338,7 @@ class LinkCrawler:
                 if not links:
                     continue
                     
-                logger.info(f"使用选择器 '{selector}' 找到 {len(links)} 个潜在链接")
+                logger.info("Selector '%s' yielded %d candidate links", selector, len(links))
                 
                 for link in links:
                     if len(articles) >= max_articles:
@@ -239,18 +370,18 @@ class LinkCrawler:
                         })
                         
                     except Exception as e:
-                        logger.debug(f"处理单个链接时出错: {e}")
+                        logger.debug("Error while processing a single link: %s", e)
                         continue
                 
-                # 如果已经找到足够的文章，停止尝试其他选择器
+                # 如果已经找到足够的文章，停止尝试其他选择??
                 if len(articles) >= min(max_articles, 10):
                     break
                     
             except Exception as e:
-                logger.debug(f"选择器 '{selector}' 执行失败: {e}")
+                logger.debug("Selector '%s' failed: %s", selector, e)
                 continue
         
-        logger.info(f"共提取到 {len(articles)} 篇文章")
+        logger.info("Extracted %d potential articles", len(articles))
         return articles
     
     def _normalize_url(self, href: str, base_url: str) -> Optional[str]:
@@ -277,12 +408,12 @@ class LinkCrawler:
             parsed = urlparse(url)
             base_parsed = urlparse(base_url)
             
-            # 只允许同域或子域的链接
+            # 只允许同域或子域的链??
             if not (parsed.netloc == base_parsed.netloc or 
                    parsed.netloc.endswith(f'.{base_parsed.netloc}')):
                 return False
             
-            # 跳过静态资源
+            # 跳过静态资??
             static_extensions = ['.css', '.js', '.jpg', '.png', '.gif', '.pdf', '.zip']
             if any(url.lower().endswith(ext) for ext in static_extensions):
                 return False
@@ -308,7 +439,7 @@ crawler_instance = LinkCrawler()
 
 async def crawl_website(url: str, max_articles: int = 50) -> Dict:
     """
-    爬取网站文章的便捷函数
+    爬取网站文章的便捷函??
     
     Args:
         url: 目标网站URL
@@ -318,3 +449,4 @@ async def crawl_website(url: str, max_articles: int = 50) -> Dict:
         爬取结果字典
     """
     return await crawler_instance.crawl_website_articles(url, max_articles)
+
