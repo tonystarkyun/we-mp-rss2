@@ -297,29 +297,76 @@ async def delete_article(
 ):
     session = DB.get_session()
     try:
-        from core.models.article import Article
+        article_deleted = False
+        delete_message = "文章不存在"
         
-        # 检查文章是否存在
+        # 尝试删除公众号文章
+        from core.models.article import Article
         article = session.query(Article).filter(Article.id == article_id).first()
-        if not article:
+        if article:
+            article.status = DATA_STATUS.DELETED
+            if cfg.get("article.true_delete", False):
+                session.delete(article)
+            session.commit()
+            article_deleted = True
+            delete_message = "公众号文章已删除"
+        
+        # 如果不是公众号文章，尝试删除专利文章
+        if not article_deleted:
+            try:
+                from core.models.patent_articles import PatentArticle
+                patent_article = session.query(PatentArticle).filter(PatentArticle.id == article_id).first()
+                if patent_article:
+                    session.delete(patent_article)
+                    session.commit()
+                    article_deleted = True
+                    delete_message = "专利文章已删除"
+            except Exception as e:
+                print(f"尝试删除专利文章失败: {str(e)}")
+        
+        # 如果不是专利文章，尝试删除行业动态文章
+        if not article_deleted:
+            try:
+                from core.models.industry_articles import IndustryArticle
+                industry_article = session.query(IndustryArticle).filter(IndustryArticle.id == article_id).first()
+                if industry_article:
+                    session.delete(industry_article)
+                    session.commit()
+                    article_deleted = True
+                    delete_message = "行业动态文章已删除"
+            except Exception as e:
+                print(f"尝试删除行业动态文章失败: {str(e)}")
+        
+        # 如果不是行业动态文章，尝试删除链接文章
+        if not article_deleted:
+            try:
+                from core.models.link_articles import LinkArticle
+                link_article = session.query(LinkArticle).filter(LinkArticle.id == article_id).first()
+                if link_article:
+                    session.delete(link_article)
+                    session.commit()
+                    article_deleted = True
+                    delete_message = "链接文章已删除"
+            except Exception as e:
+                print(f"尝试删除链接文章失败: {str(e)}")
+        
+        if not article_deleted:
             raise HTTPException(
                 status_code=fast_status.HTTP_404_NOT_FOUND,
                 detail=error_response(
                     code=40401,
-                    message="文章不存在"
+                    message="文章不存在或已被删除"
                 )
             )
-        # 逻辑删除文章（更新状态为deleted）
-        article.status = DATA_STATUS.DELETED
-        if cfg.get("article.true_delete", False):
-            session.delete(article)
-        session.commit()
         
-        return success_response(None, message="文章已标记为删除")
+        return success_response(None, message=delete_message)
+    except HTTPException as e:
+        raise e
     except Exception as e:
         session.rollback()
+        print(f"删除文章异常: {str(e)}")
         raise HTTPException(
-            status_code=fast_status.HTTP_406_NOT_ACCEPTABLE,
+            status_code=fast_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=error_response(
                 code=50001,
                 message=f"删除文章失败: {str(e)}"

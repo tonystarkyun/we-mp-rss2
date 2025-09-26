@@ -58,11 +58,23 @@ http.interceptors.response.use(
     } 
     console.log(error)
     // 统一错误处理
-    const errorMsg = error?.message||error.response?.data?.message || 
+    const errorMsg = error?.response?.data?.detail?.message || 
+                    error?.response?.data?.message || 
                     error.response?.data?.detail || 
                     error.message || 
                     '请求错误'
-    // Message.error(errorMsg)
+    
+    // 检查是否是微信会话失效错误
+    if (errorMsg.includes('invalid session') || 
+        errorMsg.includes('代码:200003') || 
+        errorMsg.includes('请重新扫码授权') ||
+        errorMsg.includes('登录会话已失效')) {
+      Message.error({
+        content: '微信公众号平台登录会话已失效，请重新扫码登录',
+        duration: 5000
+      })
+    }
+    
     return Promise.reject(errorMsg)
   }
 )

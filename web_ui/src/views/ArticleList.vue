@@ -611,7 +611,25 @@ const deleteMp = async (mpId: string) => {
       onOk: async () => {
         await deleteMpApi(mpId);
         Message.success('订阅号删除成功');
+        
+        // 如果删除的是当前选中的公众号，清空文章列表并重置选择状态
+        if (activeMpId.value === mpId) {
+          activeMpId.value = '';
+          activeFeed.value = {
+            id: "",
+            name: "全部",
+          };
+          articles.value = [];
+          pagination.value.total = 0;
+          pagination.value.current = 1;
+        }
+        
         fetchMpList();
+        
+        // 如果当前没有选中公众号或选中的是"全部"，重新加载文章列表
+        if (activeMpId.value === '' || activeMpId.value === undefined) {
+          fetchArticles();
+        }
       },
       onCancel: () => {
         Message.info('已取消删除操作');

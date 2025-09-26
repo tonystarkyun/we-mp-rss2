@@ -99,10 +99,7 @@
           </template>
           <template #actions="{ record }">
             <a-space>
-              <a-button type="text" @click="viewArticle(record)" :title="record.id">
-                <template #icon><icon-eye /></template>
-              </a-button>
-              <a-button type="text" status="danger" @click="deleteArticle(record.id)">
+              <a-button type="text" status="danger" @click="deleteArticle(record.id)" title="删除文章">
                 <template #icon><icon-delete /></template>
               </a-button>
             </a-space>
@@ -140,7 +137,7 @@ import { getArticles,deleteArticle as deleteArticleApi ,ClearArticle,ClearDuplic
 import { getIndustries, updateIndustries, deleteIndustryApi, exportIndustries as exportIndustriesApi, importIndustries as importIndustriesApi } from '@/api/industry'
 import { inject } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
-import { formatDateTime,formatTimestamp } from '@/utils/date'
+import { formatCrawlerDateTime,formatTimestamp } from '@/utils/date'
 import router from '@/router'
 import TextIcon from '@/components/TextIcon.vue'
 const articles = ref([])
@@ -213,7 +210,7 @@ const columns = [
     width: '140',
     render: ({ record }) => h('span',
       { style: { color: 'var(--color-text-3)', fontSize: '12px' } },
-      formatDateTime(record.created_at)
+      formatCrawlerDateTime(record.created_at)
     )
   },
   {
@@ -399,10 +396,11 @@ const handleRefresh = () => {
   }).then(() => {
     Message.success('刷新成功')
     refreshModalVisible.value = false
+    // 爬取完成后刷新文章列表
+    return fetchArticles()
   }).finally(() => {
     fullLoading.value = false
   })
-  fetchArticles()
 }
 
 const refresh = () => {
@@ -430,7 +428,7 @@ const viewArticle = async (_record: any) => {
     currentArticle.value = {
       title: record.title,
       content: processedContent,
-      time: formatDateTime(record.created_at),
+      time: formatCrawlerDateTime(record.created_at),
       url: record.url
     }
     articleModalVisible.value = true
@@ -438,7 +436,7 @@ const viewArticle = async (_record: any) => {
     currentArticle.value = {
       title: record.title,
       content: source_tpl,
-      time: formatDateTime(record.created_at),
+      time: formatCrawlerDateTime(record.created_at),
       url: record.url
     }
     articleModalVisible.value = true

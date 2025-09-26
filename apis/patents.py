@@ -123,7 +123,7 @@ async def add_patent(
                     patent_id=new_patent.id,
                     title=article.get('title', ''),
                     url=article.get('url', ''),
-                    publish_time=int(datetime.now().timestamp()),
+                    publish_time=article.get("publish_time_timestamp", ""),
                     status=1
                 )
                 session.add(patent_article)
@@ -169,11 +169,38 @@ async def delete_patent(
                 message="专利链接不存在"
             )
         
-        # 删除专利链接
+        # 先删除该专利链接下的所有文章
+        articles = session.query(PatentArticle).filter(PatentArticle.patent_id == patent_id).all()
+        for article in articles:
+            session.delete(article)
+        
+        # 再删除专利链接本身
         session.delete(patent)
         session.commit()
         
-        return success_response({"message": "专利链接删除成功"})
+        # 清理缓存文件 (RSS缓存等)
+        try:
+            from core.rss import RSS
+            rss = RSS()
+            rss.clear_cache(mp_id=patent_id)
+            print(f"已清理专利链接 {patent_id} 的RSS缓存")
+        except Exception as cache_error:
+            print(f"清理缓存文件时出错: {cache_error}")
+        
+        # 清理头像文件 (如果有)
+        try:
+            import os
+            if patent.avatar and patent.avatar != "/static/logo.svg" and os.path.exists(patent.avatar):
+                os.remove(patent.avatar)
+                print(f"已删除头像文件: {patent.avatar}")
+        except Exception as file_error:
+            print(f"清理头像文件时出错: {file_error}")
+        
+        return success_response({
+            "message": "专利链接及其文章删除成功",
+            "id": patent_id,
+            "deleted_articles_count": len(articles)
+        })
     except Exception as e:
         session.rollback()
         print(f"删除专利链接错误: {str(e)}")
@@ -240,7 +267,7 @@ async def update_patent_content(
                     patent_id=patent_id,
                     title=article.get('title', ''),
                     url=article.get('url', ''),
-                    publish_time=int(datetime.now().timestamp()),
+                    publish_time=article.get("publish_time_timestamp", ""),
                     status=1
                 )
                 session.add(patent_article)

@@ -38,12 +38,24 @@ async def search_mp(
         }
         return success_response(data)
     except Exception as e:
-        print(f"搜索公众号错误: {str(e)}")
+        error_msg = str(e)
+        print(f"搜索公众号错误: {error_msg}")
+        
+        # 根据错误类型返回更具体的错误信息
+        if "invalid session" in error_msg or "代码:200003" in error_msg:
+            message = "微信公众号平台登录会话已失效，请重新扫码授权"
+        elif "频率控制" in error_msg or "frequency control" in error_msg:
+            message = "搜索频率过高，请稍后再试"
+        elif "网络" in error_msg or "timeout" in error_msg:
+            message = "网络连接超时，请检查网络后重试"
+        else:
+            message = f"搜索公众号失败：{error_msg}"
+        
         raise HTTPException(
-            status_code=status.HTTP_201_CREATED,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=error_response(
                 code=50001,
-                message=f"搜索公众号失败,请重新扫码授权！",
+                message=message,
             )
         )
 
@@ -251,6 +263,8 @@ async def delete_mp(
     session = DB.get_session()
     try:
         from core.models.feed import Feed
+        from core.models.article import ArticleBase
+        
         mp = session.query(Feed).filter(Feed.id == mp_id).first()
         if not mp:
             raise HTTPException(
@@ -261,11 +275,38 @@ async def delete_mp(
                 )
             )
         
+        # 先删除该公众号的所有文章
+        articles = session.query(ArticleBase).filter(ArticleBase.mp_id == mp_id).all()
+        for article in articles:
+            session.delete(article)
+        
+        # 再删除公众号
         session.delete(mp)
         session.commit()
+        
+        # 清理缓存文件 (RSS缓存、内容缓存等)
+        try:
+            from core.rss import RSS
+            rss = RSS()
+            rss.clear_cache(mp_id=mp_id)
+            print(f"已清理公众号 {mp_id} 的RSS缓存")
+        except Exception as cache_error:
+            print(f"清理缓存文件时出错: {cache_error}")
+            # 缓存清理失败不应该影响主要的删除操作
+        
+        # 清理头像文件 (如果有)
+        try:
+            import os
+            if mp.mp_cover and os.path.exists(mp.mp_cover):
+                os.remove(mp.mp_cover)
+                print(f"已删除头像文件: {mp.mp_cover}")
+        except Exception as file_error:
+            print(f"清理头像文件时出错: {file_error}")
+        
         return success_response({
-            "message": "订阅号删除成功",
-            "id": mp_id
+            "message": "订阅号及其文章删除成功",
+            "id": mp_id,
+            "deleted_articles_count": len(articles)
         })
     except Exception as e:
         session.rollback()

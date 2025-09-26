@@ -132,8 +132,24 @@ const handleSearch = async (value: string) => {
     })
     searchResults.value = res.list || []
   } catch (error) {
-    // Message.error('搜索公众号失败')
+    console.error('搜索公众号失败:', error)
     searchResults.value = []
+    
+    // 检查是否是会话失效错误
+    const errorMessage = error?.message || error?.detail?.message || error?.response?.data?.message || ''
+    if (errorMessage.includes('invalid session') || 
+        errorMessage.includes('代码:200003') || 
+        errorMessage.includes('请重新扫码授权') ||
+        errorMessage.includes('登录失效')) {
+      Message.error({
+        content: '微信公众号平台登录会话已失效，请重新扫码登录',
+        duration: 5000
+      })
+      // 可以在这里添加跳转到登录页面或显示二维码的逻辑
+      // router.push('/auth') // 如果有专门的认证页面
+    } else {
+      Message.error('搜索公众号失败，请稍后重试')
+    }
   }
 }
 
