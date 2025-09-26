@@ -328,6 +328,91 @@ class LinkCrawler:
 
         return articles
 
+    async def _extract_wanfang_search(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
+        """Special handling for Wanfang search pages."""
+        articles: List[Dict[str, str]] = []
+
+        try:
+            await page.wait_for_selector('div.normal-list', timeout=10000)
+        except Exception:
+            return articles
+
+        raw_items = await page.evaluate(
+            """() => Array.from(document.querySelectorAll('div.normal-list')).map(el => ({
+                id: (el.querySelector('.title-id-hidden')?.textContent || '').trim(),
+                title: (el.querySelector('.title')?.textContent || '').trim(),
+                summary: (el.querySelector('.abstract-area')?.innerText || '').trim(),
+                authors: Array.from(el.querySelectorAll('.author-area .authors')).map(node => node.textContent.trim()).filter(Boolean),
+                typeLabel: el.querySelector('.essay-type')?.textContent?.trim() || '',
+                keywords: Array.from(el.querySelectorAll('.keywords-area .keywords-list')).map(node => node.textContent.trim()).filter(Boolean)
+            }))"""
+        )
+
+        if not raw_items:
+            return articles
+
+        type_map = {
+            'periodical': 'perio',
+            'perio': 'perio',
+            'degree': 'degree',
+            'thesis': 'degree',
+            'dissertation': 'degree',
+            'conference': 'conference',
+            'patent': 'patent',
+            'std': 'std',
+            'standard': 'std',
+            'tech': 'tech',
+            'report': 'tech',
+            'achievement': 'tech',
+            'nstr': 'nstr',
+            'localchronicle': 'localchronicle',
+            'law': 'law',
+            'policy': 'policy',
+            'video': 'video'
+        }
+
+        for item in raw_items:
+            record_id = (item.get('id') or '').strip()
+            if not record_id:
+                continue
+
+            prefix = record_id.split('_', 1)[0].lower() if '_' in record_id else record_id.lower()
+            type_param = type_map.get(prefix, prefix or 'perio')
+            detail_url = f"https://www.wanfangdata.com.cn/details/detail.do?_type={type_param}&id={record_id}"
+
+            title = (item.get('title') or '').strip() or detail_url
+
+            authors = item.get('authors') or []
+            source_info = ''
+            if authors:
+                tail = authors[-1]
+                if any(ch.isdigit() for ch in tail):
+                    source_info = tail
+                    authors = authors[:-1]
+
+            summary = (item.get('summary') or '').strip()
+            if summary.startswith('摘要'):
+                summary = summary[2:].lstrip('：:').strip()
+
+            keywords = item.get('keywords') or []
+            type_label = item.get('typeLabel') or ''
+
+            articles.append({
+                'title': title[:200],
+                'url': detail_url,
+                'summary': summary[:500] if summary else '',
+                'authors': authors,
+                'source': source_info,
+                'type': type_label,
+                'keywords': keywords,
+                'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S')
+            })
+
+            if len(articles) >= max_articles:
+                break
+
+        return articles
+
     async def _extract_reuters_search(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
         """Special handling for Reuters site search pages."""
         articles: List[Dict[str, str]] = []
@@ -556,6 +641,11 @@ class LinkCrawler:
         articles = []
         
         parsed_url = urlparse(base_url)
+
+        if parsed_url.netloc.endswith('wanfangdata.com.cn') and parsed_url.path.startswith('/paper'):
+            wanfang_articles = await self._extract_wanfang_search(page, base_url, max_articles)
+            if wanfang_articles:
+                return wanfang_articles
 
         if parsed_url.netloc.endswith('foodnavigator.com') and parsed_url.path.startswith('/search'):
             foodnavigator_articles = await self._extract_foodnavigator_search(page, base_url, max_articles)
