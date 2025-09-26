@@ -7,10 +7,14 @@ import sys
 import shutil
 import json
 from typing import List, Dict, Optional
-from urllib.parse import urljoin, urlparse, parse_qs, urlencode
+from urllib.parse import urljoin, urlparse, parse_qs, urlencode, unquote_plus
 import logging
 
 logger = logging.getLogger(__name__)
+
+FOODNAVIGATOR_QUERYLY_KEY = '162cd04ba9044343'
+FOODNAVIGATOR_EXT_FIELDS = 'eventStartDate,creator,subtype,firstPubDate,sectionSupplier,freeByLine,imageresizer,promo_image,resizerv2_id,resizerv2_auth,resizerv2_mimetype,subheadline'
+FOODNAVIGATOR_BATCH_SIZE = 20
 
 class LinkCrawler:
     """链接管理爬虫服务"""
@@ -182,6 +186,148 @@ class LinkCrawler:
             
         return info
     
+    async def _extract_foodnavigator_search(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
+        """Special handling for FoodNavigator search pages."""
+        articles: List[Dict[str, str]] = []
+        parsed = urlparse(base_url)
+        query_params = parse_qs(parsed.query)
+
+        keyword = ''
+        for key in ('query',):
+            values = query_params.get(key)
+            if values:
+                keyword = unquote_plus((values[0] or '').strip())
+                if keyword:
+                    break
+
+        if not keyword:
+            return articles
+
+        sort_param = ''
+        for key in ('sort', 'sortby'):
+            value = query_params.get(key, [None])[0]
+            if value:
+                sort_param = value.lower()
+                break
+
+        start_index = 0
+        for key in ('endindex', 'index', 'offset', 'start'):
+            value = query_params.get(key, [None])[0]
+            if value:
+                try:
+                    start_index = max(int(value), 0)
+                    break
+                except ValueError:
+                    continue
+
+        if start_index == 0:
+            page_value = query_params.get('page', [None])[0]
+            if page_value:
+                try:
+                    page_number = max(int(page_value), 1)
+                    start_index = (page_number - 1) * FOODNAVIGATOR_BATCH_SIZE
+                except ValueError:
+                    start_index = 0
+
+        faceted_key = query_params.get('facetedkey', [None])[0]
+        faceted_value = query_params.get('facetedvalue', [None])[0]
+        date_range = query_params.get('daterange', [None])[0]
+
+        offset = max(start_index, 0)
+        user_agent = await page.evaluate('() => navigator.userAgent')
+
+        while len(articles) < max_articles:
+            batch = min(max_articles - len(articles), FOODNAVIGATOR_BATCH_SIZE)
+            params = {
+                'queryly_key': FOODNAVIGATOR_QUERYLY_KEY,
+                'query': keyword,
+                'endindex': str(offset),
+                'batchsize': str(batch),
+                'showfaceted': 'true',
+                'extendeddatafields': FOODNAVIGATOR_EXT_FIELDS,
+                'timezoneoffset': '0'
+            }
+
+            if sort_param == 'date':
+                params['sort'] = 'date'
+
+            if faceted_key and faceted_value:
+                params['facetedkey'] = faceted_key
+                params['facetedvalue'] = faceted_value
+
+            if date_range:
+                params['daterange'] = date_range
+
+            response = await page.context.request.get(
+                'https://api.queryly.com/json.aspx',
+                params=params,
+                headers={
+                    'User-Agent': user_agent,
+                    'Accept': 'application/json',
+                    'Referer': base_url
+                }
+            )
+
+            if not response.ok:
+                logger.warning('FoodNavigator search API returned non-200 response: %s', response.status)
+                break
+
+            try:
+                data = json.loads(await response.text())
+            except json.JSONDecodeError as exc:
+                logger.warning('Failed to decode FoodNavigator search payload: %s', exc)
+                break
+
+            items = data.get('items') or []
+            if not items:
+                break
+
+            for item in items:
+                if len(articles) >= max_articles:
+                    break
+
+                link = (item.get('link') or '').strip()
+                if not link:
+                    continue
+
+                if link.startswith('//'):
+                    article_url = 'https:' + link
+                elif link.startswith('http'):
+                    article_url = link
+                else:
+                    article_url = urljoin('https://www.foodnavigator.com', link)
+
+                title = (item.get('title') or '').strip()
+                if not title:
+                    title = article_url
+
+                summary = (item.get('subheadline') or item.get('description') or '').strip()
+                published = (item.get('firstPubDate') or item.get('pubdate') or '').strip()
+                creator = (item.get('creator') or '').strip()
+
+                articles.append({
+                    'title': title[:200],
+                    'url': article_url,
+                    'summary': summary[:500] if summary else '',
+                    'author': creator,
+                    'published_at': published,
+                    'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S')
+                })
+
+            metadata = data.get('metadata') or {}
+            next_index = metadata.get('endindex')
+            try:
+                next_index_int = int(next_index)
+            except (TypeError, ValueError):
+                next_index_int = offset + len(items)
+
+            if next_index_int <= offset or len(articles) >= max_articles:
+                break
+
+            offset = next_index_int
+
+        return articles
+
     async def _extract_reuters_search(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
         """Special handling for Reuters site search pages."""
         articles: List[Dict[str, str]] = []
@@ -411,14 +557,21 @@ class LinkCrawler:
         
         parsed_url = urlparse(base_url)
 
+        if parsed_url.netloc.endswith('foodnavigator.com') and parsed_url.path.startswith('/search'):
+            foodnavigator_articles = await self._extract_foodnavigator_search(page, base_url, max_articles)
+            if foodnavigator_articles:
+                return foodnavigator_articles
+
         if parsed_url.netloc.endswith('reuters.com'):
             reuters_articles = await self._extract_reuters_search(page, base_url, max_articles)
             if reuters_articles:
                 return reuters_articles
+
         if parsed_url.netloc.endswith('statista.com') and parsed_url.path.startswith('/search'):
             statista_articles = await self._extract_statista_search(page, base_url, max_articles)
             if statista_articles:
                 return statista_articles
+
         
         # 通用文章选择器策略（按优先级排序??
         selectors = [
