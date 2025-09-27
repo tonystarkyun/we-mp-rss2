@@ -11,7 +11,7 @@
 - `build-linux.sh:42-45` 只安装 Python 依赖，没有执行 `playwright install firefox`；构建机若未预装 Firefox 缓存，打包产物就缺少对应二进制。
 
 ## 已实施改动
-- `core/crawler.py` 现默认通过 `p.firefox.launch(...)` 启动 Playwright Firefox，并在 `core/crawler.py:58-71` 记录来源日志；`_find_browser_executable` 支持环境变量、Playwright 目录、打包目录与系统路径四层探测，同时通过 `_validate_firefox_binary`（`core/crawler.py:153-168`）过滤无效可执行文件。
+- `core/crawler.py` 现默认通过 `p.firefox.launch(...)` 启动 Playwright Firefox，并在 `core/crawler.py:58-71` 记录来源日志；`_find_browser_executable` 支持环境变量、Playwright 目录、打包目录与系统路径四层探测，同时通过 `_validate_firefox_binary`（`core/crawler.py:153-168`）过滤无效可执行文件；路透社定制逻辑增强了请求头部（`core/crawler.py:476-487`）并新增 `_is_reuters_article_path` 过滤导航链接，仅保留带有日期后缀或 `-id` 的文章路径（`core/crawler.py:1049-1070`）。
 - `build-linux.sh:42-48` 在安装 Python 依赖后运行 `python3 -m playwright install firefox`，确保构建机缓存了 Firefox 浏览器。
 - `runtime_hook_playwright.py:17-55` 在 PyInstaller 环境中同时设置 `FIREFOX_BINARY` 与 `PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH`，并输出调试日志，方便确认路径。
 

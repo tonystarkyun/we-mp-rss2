@@ -25,6 +25,7 @@ class LinkCrawler:
         self.headless = headless
         self.timeout = timeout
         self.browser_executable = self._find_browser_executable()
+        self._date_suffix_regex = re.compile(r'-\d{4}-\d{2}-\d{2}$')
         
     async def crawl_website_articles(self, url: str, max_articles: int = 50) -> Dict:
         """
@@ -483,6 +484,9 @@ class LinkCrawler:
                 credentials: 'include',
                 headers: {
                     'Accept': 'application/json, text/plain, */*',
+                    'Content-Type': 'application/json',
+                    'Arc-Site': 'reuters',
+                    'Referer': 'https://www.reuters.com/',
                     'X-Requested-With': 'XMLHttpRequest'
                 }
             });
@@ -1054,11 +1058,33 @@ class LinkCrawler:
             path = parsed.path.lower()
             if any(pattern in path for pattern in skip_patterns):
                 return False
-            
+
+            if base_parsed.netloc.endswith('reuters.com'):
+                if not self._is_reuters_article_path(path):
+                    return False
+
             return True
             
         except Exception:
             return False
+
+    def _is_reuters_article_path(self, path: str) -> bool:
+        """Heuristic to identify Reuters article URLs."""
+
+        path = path.rstrip('/').lower()
+        if not path:
+            return False
+
+        if any(segment in path for segment in ['/video', '/graphics', '/live/', '/picture/']):
+            return False
+
+        if '-id' in path:
+            return True
+
+        if self._date_suffix_regex.search(path):
+            return True
+
+        return False
 
 # 全局爬虫实例
 crawler_instance = LinkCrawler()
