@@ -39,7 +39,9 @@ def setup_browser_paths():
             for firefox_path in firefox_paths:
                 if os.path.exists(firefox_path):
                     os.environ['FIREFOX_BINARY'] = firefox_path
+                    os.environ['PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH'] = firefox_path
                     print(f"Runtime Hook: 设置 FIREFOX_BINARY = {firefox_path}")
+                    print(f"Runtime Hook: 设置 PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH = {firefox_path}")
                     break
             else:
                 # 未找到打包的Firefox，设置系统路径优先级
@@ -47,7 +49,9 @@ def setup_browser_paths():
                 for path in system_firefox_paths:
                     if os.path.exists(path):
                         os.environ['FIREFOX_BINARY'] = path
+                        os.environ['PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH'] = path
                         print(f"Runtime Hook: 使用系统Firefox = {path}")
+                        print(f"Runtime Hook: 设置 PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH = {path}")
                         break
         
         # 设置 Chromium 浏览器路径（跨平台）

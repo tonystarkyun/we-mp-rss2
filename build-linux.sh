@@ -44,6 +44,9 @@ echo "安装 Python 依赖..."
 pip3 install -r requirements.txt
 pip3 install pyinstaller
 
+echo "安装 Playwright Firefox 浏览器..."
+python3 -m playwright install firefox
+
 # 构建前端
 echo "构建前端项目..."
 if [ -d "web_ui" ]; then
@@ -223,7 +226,6 @@ fi
 
 echo ""
 echo "构建完成！"
-
 
 
 

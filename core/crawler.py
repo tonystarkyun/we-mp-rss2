@@ -6,6 +6,7 @@ import os
 import sys
 import shutil
 import json
+import subprocess
 from typing import List, Dict, Optional
 from urllib.parse import urljoin, urlparse, parse_qs, urlencode, unquote_plus
 import re
@@ -55,27 +56,20 @@ class LinkCrawler:
                 if parsed_target_url.netloc.endswith('reuters.com') and target_headless:
                     target_headless = False
                     logger.info('Reuters domain detected; switching to headful mode to satisfy anti-bot checks')
-                # 根据环境选择浏览器启动方??
+                # 根据环境选择浏览器启动方式
+                launch_kwargs = {
+                    'headless': target_headless
+                }
                 if self.browser_executable:
-                    # 使用系统浏览??
-                    logger.info("Using system browser: %s", self.browser_executable)
-                    browser = await p.chromium.launch(
-                        executable_path=self.browser_executable,
-                        headless=target_headless,
-                        args=[
-                            '--no-sandbox',
-                            '--disable-dev-shm-usage',
-                            '--disable-gpu',
-                            '--disable-features=VizDisplayCompositor'
-                        ]
-                    )
+                    logger.info("Using Firefox executable: %s", self.browser_executable)
+                    launch_kwargs['executable_path'] = self.browser_executable
                 else:
-                    # 使用Playwright内置浏览??
-                    logger.info("Using bundled Playwright browser")
-                    browser = await p.chromium.launch(headless=target_headless)
-                
+                    logger.info("Using bundled Playwright Firefox browser")
+
+                browser = await p.firefox.launch(**launch_kwargs)
+
                 context = await browser.new_context(
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0'
                 )
                 page = await context.new_page()
                 
@@ -112,31 +106,70 @@ class LinkCrawler:
     def _find_browser_executable(self) -> Optional[str]:
         """Locate an available browser executable on the host."""
         
-        # 如果是PyInstaller环境，优先查找系统安装的Chrome
+        # 优先使用环境变量显式提供的可执行文件
+        env_vars = [
+            'PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH',
+            'FIREFOX_BINARY'
+        ]
+        for var in env_vars:
+            firefox_path = os.environ.get(var)
+            if firefox_path and os.path.exists(firefox_path):
+                if self._validate_firefox_binary(firefox_path, source=f"env:{var}"):
+                    return firefox_path
+
+        # Playwright 浏览器目录优先
+        playwright_dir = os.environ.get('PLAYWRIGHT_BROWSERS_PATH')
+        if playwright_dir:
+            candidate = os.path.join(playwright_dir, 'firefox-1490', 'firefox', 'firefox')
+            if os.path.exists(candidate) and self._validate_firefox_binary(candidate, source='PLAYWRIGHT_BROWSERS_PATH'):
+                return candidate
+
+        # PyInstaller 环境下检查打包目录中的 Firefox
         if hasattr(sys, '_MEIPASS'):
-            logger.info("Detected PyInstaller environment, searching for system browser")
-            
-            # Windows Chrome路径
-            chrome_paths = [
-                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe"),
-                # Edge浏览器作为备??
-                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            bundle_firefox_paths = [
+                os.path.join(sys._MEIPASS, 'playwright', 'firefox-1490', 'firefox', 'firefox'),
+                os.path.join(sys._MEIPASS, 'firefox-native', 'firefox')
             ]
-            
-            for chrome_path in chrome_paths:
-                if os.path.exists(chrome_path):
-                    logger.info("Found browser executable: %s", chrome_path)
-                    return chrome_path
-            
-            logger.warning("No system Chrome or Edge browser found")
-            return None
-        
-        # 开发环境使用Playwright自带的浏览器
-        logger.info("Development environment detected; using bundled Playwright browser")
+            for firefox_path in bundle_firefox_paths:
+                if os.path.exists(firefox_path) and self._validate_firefox_binary(firefox_path, source='PyInstaller bundle'):
+                    return firefox_path
+
+        # 检查默认 Playwright 缓存目录
+        default_playwright_dir = os.path.expanduser('~/.cache/ms-playwright')
+        candidate = os.path.join(default_playwright_dir, 'firefox-1490', 'firefox', 'firefox')
+        if os.path.exists(candidate) and self._validate_firefox_binary(candidate, source='Playwright cache'):
+            return candidate
+
+        # 开发或系统环境，尝试常见路径
+        firefox_candidates = [
+            '/usr/bin/firefox',
+            '/usr/bin/firefox-esr',
+            '/snap/bin/firefox',
+            '/Applications/Firefox.app/Contents/MacOS/firefox',
+            os.path.expanduser('~/Applications/Firefox.app/Contents/MacOS/firefox'),
+            r"C:\Program Files\Mozilla Firefox\firefox.exe",
+            r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe"
+        ]
+        for firefox_path in firefox_candidates:
+            if os.path.exists(firefox_path) and self._validate_firefox_binary(firefox_path, source='system path'):
+                return firefox_path
+
+        logger.info("No explicit Firefox executable found; falling back to Playwright managed browser")
         return None
+
+    def _validate_firefox_binary(self, binary_path: str, source: str) -> bool:
+        """Ensure the candidate Firefox binary is runnable."""
+
+        try:
+            subprocess.run([
+                binary_path,
+                '--version'
+            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=15)
+            logger.info("Validated Firefox executable from %s: %s", source, binary_path)
+            return True
+        except (subprocess.SubprocessError, OSError) as exc:
+            logger.warning("Firefox executable from %s is not usable (%s); skipping", source, exc)
+            return False
     
     async def _handle_cookie_consent(self, page):
         """处理cookie同意弹窗"""
