@@ -235,10 +235,16 @@ async def update_patent_content(
         
         # 计算需要爬取的文章数量（简单实现，每页10篇文章）
         articles_per_page = 10
-        max_articles = (end_page - start_page + 1) * articles_per_page
+        page_count = max(1, end_page - start_page + 1)
+        max_articles = page_count * articles_per_page
         
         # 重新爬取网站内容
-        crawl_result = await crawl_website(patent.url, max_articles=max_articles)
+        crawl_result = await crawl_website(
+            patent.url,
+            max_articles=max_articles,
+            start_page=start_page,
+            end_page=end_page
+        )
         
         if not crawl_result['success']:
             return error_response(

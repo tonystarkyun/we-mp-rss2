@@ -9,12 +9,14 @@ from core.config import cfg
 import io
 import os
 import json
+import hashlib
 from typing import Optional, List
 from pydantic import BaseModel
 from core.crawler import crawl_website
 from core.models.links import Link
 from core.models.link_articles import LinkArticle
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 router = APIRouter(prefix=f"/links", tags=["链接管理"])
 
@@ -116,8 +118,14 @@ async def add_link(
         if crawl_result['success'] and crawl_result['articles']:
             import time
             for i, article in enumerate(crawl_result['articles']):
-                # 生成唯一ID：时间戳 + 链接ID + 序号
-                unique_id = f"{new_link.id}_{int(datetime.now().timestamp())}_{i}"
+                record_id = (article.get('record_id') or '').strip()
+                if record_id:
+                    unique_id = f"{new_link.id}_{record_id}"
+                    if len(unique_id) > 50:
+                        hashed = hashlib.md5(record_id.encode('utf-8')).hexdigest()[:16]
+                        unique_id = f"{new_link.id}_{hashed}"
+                else:
+                    unique_id = f"{new_link.id}_{int(datetime.now().timestamp())}_{i}"
                 link_article = LinkArticle(
                     id=unique_id,
                     link_id=new_link.id,
@@ -285,10 +293,16 @@ async def update_link_content(
         
         # 计算需要爬取的文章数量（简单实现，每页10篇文章）
         articles_per_page = 10
-        max_articles = (end_page - start_page + 1) * articles_per_page
+        page_count = max(1, end_page - start_page + 1)
+        max_articles = page_count * articles_per_page
         
         # 重新爬取网站内容
-        crawl_result = await crawl_website(link.url, max_articles=max_articles)
+        crawl_result = await crawl_website(
+            link.url,
+            max_articles=max_articles,
+            start_page=start_page,
+            end_page=end_page
+        )
         
         if not crawl_result['success']:
             return error_response(
@@ -303,16 +317,42 @@ async def update_link_content(
             import time
             for i, article in enumerate(crawl_result['articles']):
                 # 检查文章是否已存在（通过URL去重）
-                existing = session.query(LinkArticle).filter(
-                    LinkArticle.link_id == link_id,
-                    LinkArticle.url == article.get('url', '')
-                ).first()
-                
+                article_url = (article.get('url') or '').strip()
+                article_title = (article.get('title') or '').strip() or article_url
+                record_id = (article.get('record_id') or '').strip()
+
+                search_conditions = []
+                if article_url:
+                    search_conditions.append(LinkArticle.url == article_url)
+                if article_title:
+                    search_conditions.append(LinkArticle.title == article_title)
+
+                candidate_id = None
+                if record_id:
+                    candidate_id = f"{link_id}_{record_id}"
+                    if len(candidate_id) > 50:
+                        hashed = hashlib.md5(record_id.encode('utf-8')).hexdigest()[:16]
+                        candidate_id = f"{link_id}_{hashed}"
+                    search_conditions.append(LinkArticle.id == candidate_id)
+
+                existing = None
+                if search_conditions:
+                    existing = session.query(LinkArticle).filter(
+                        LinkArticle.link_id == link_id,
+                        or_(*search_conditions)
+                    ).first()
+
                 if existing:
+                    # 如果文章已存在，更新URL并跳过新增，避免重复
+                    if article_url and existing.url != article_url:
+                        existing.url = article_url
                     continue  # 跳过已存在的文章
-                
+
                 # 生成唯一ID
-                unique_id = f"{link_id}_{int(datetime.now().timestamp())}_{i}"
+                if candidate_id:
+                    unique_id = candidate_id
+                else:
+                    unique_id = f"{link_id}_{int(datetime.now().timestamp())}_{i}"
                 link_article = LinkArticle(
                     id=unique_id,
                     link_id=link_id,

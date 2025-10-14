@@ -8,9 +8,10 @@ import shutil
 import json
 import subprocess
 from typing import List, Dict, Optional
-from urllib.parse import urljoin, urlparse, parse_qs, urlencode, unquote_plus
+from urllib.parse import urljoin, urlparse, parse_qs, urlencode, unquote_plus, urlunparse
 import re
 import logging
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +28,21 @@ class LinkCrawler:
         self.browser_executable = self._find_browser_executable()
         self._date_suffix_regex = re.compile(r'-\d{4}-\d{2}-\d{2}$')
         
-    async def crawl_website_articles(self, url: str, max_articles: int = 50) -> Dict:
+    async def crawl_website_articles(
+        self,
+        url: str,
+        max_articles: int = 50,
+        start_page: int = 0,
+        end_page: Optional[int] = None
+    ) -> Dict:
         """
         爬取网站的文章列??
         
         Args:
             url: 目标网站URL
             max_articles: 最大抓取文章数
+            start_page: 起始页码（基于0）
+            end_page: 结束页码（基于0，包含）
             
         Returns:
             Dict: 包含成功状态、文章列表和统计信息
@@ -49,6 +58,10 @@ class LinkCrawler:
             },
             'error': None
         }
+
+        start_page = max(0, start_page or 0)
+        if end_page is None or end_page < start_page:
+            end_page = start_page
         
         try:
             async with async_playwright() as p:
@@ -87,7 +100,13 @@ class LinkCrawler:
                 result['website_info'] = await self._extract_website_info(page, url)
                 
                 # 爬取文章列表
-                articles = await self._extract_articles(page, url, max_articles)
+                articles = await self._extract_articles(
+                    page,
+                    url,
+                    max_articles,
+                    start_page=start_page,
+                    end_page=end_page
+                )
                 
                 result['articles'] = articles
                 result['total_found'] = len(articles)
@@ -269,6 +288,7 @@ class LinkCrawler:
         date_range = query_params.get('daterange', [None])[0]
 
         offset = max(start_index, 0)
+        seen_urls: set = set()
         user_agent = await page.evaluate('() => navigator.userAgent')
 
         while len(articles) < max_articles:
@@ -332,6 +352,10 @@ class LinkCrawler:
                 else:
                     article_url = urljoin('https://www.foodnavigator.com', link)
 
+                if article_url in seen_urls:
+                    continue
+                seen_urls.add(article_url)
+
                 title = (item.get('title') or '').strip()
                 if not title:
                     title = article_url
@@ -372,10 +396,17 @@ class LinkCrawler:
         except Exception:
             return articles
 
+        encoded_map: Dict[str, str] = {}
+        try:
+            encoded_map = await asyncio.to_thread(self._wanfang_fetch_encoded_links, base_url)
+        except Exception as exc:  # pragma: no cover - network dependent
+            logger.warning("Failed to resolve Wanfang encoded links: %s", exc)
+
         raw_items = await page.evaluate(
             """() => Array.from(document.querySelectorAll('div.normal-list')).map(el => ({
                 id: (el.querySelector('.title-id-hidden')?.textContent || '').trim(),
                 title: (el.querySelector('.title')?.textContent || '').trim(),
+                link: (el.querySelector('.title a')?.href || '').trim(),
                 summary: (el.querySelector('.abstract-area')?.innerText || '').trim(),
                 authors: Array.from(el.querySelectorAll('.author-area .authors')).map(node => node.textContent.trim()).filter(Boolean),
                 typeLabel: el.querySelector('.essay-type')?.textContent?.trim() || '',
@@ -406,14 +437,38 @@ class LinkCrawler:
             'video': 'video'
         }
 
+        seen_ids: set = set()
+        seen_urls: set = set()
+
         for item in raw_items:
+            link = (item.get('link') or '').strip()
+            detail_url = ''
+
+            if link:
+                detail_url = urljoin(base_url, link)
+
             record_id = (item.get('id') or '').strip()
-            if not record_id:
+            record_id_lower = record_id.lower()
+            if not detail_url:
+                if record_id_lower and record_id_lower in encoded_map:
+                    detail_url = encoded_map[record_id_lower]
+                elif record_id:
+                    prefix = record_id.split('_', 1)[0].lower() if '_' in record_id else record_id_lower
+                    type_param = type_map.get(prefix, prefix or 'perio')
+                    detail_url = f"https://www.wanfangdata.com.cn/details/detail.do?_type={type_param}&id={record_id}"
+
+            if not record_id and not detail_url:
                 continue
 
-            prefix = record_id.split('_', 1)[0].lower() if '_' in record_id else record_id.lower()
-            type_param = type_map.get(prefix, prefix or 'perio')
-            detail_url = f"https://www.wanfangdata.com.cn/details/detail.do?_type={type_param}&id={record_id}"
+            if record_id_lower:
+                if record_id_lower in seen_ids:
+                    continue
+                seen_ids.add(record_id_lower)
+
+            if detail_url:
+                if detail_url in seen_urls:
+                    continue
+                seen_urls.add(detail_url)
 
             title = (item.get('title') or '').strip() or detail_url
 
@@ -435,6 +490,7 @@ class LinkCrawler:
             articles.append({
                 'title': title[:200],
                 'url': detail_url,
+                'record_id': record_id,
                 'summary': summary[:500] if summary else '',
                 'authors': authors,
                 'source': source_info,
@@ -447,6 +503,105 @@ class LinkCrawler:
                 break
 
         return articles
+
+    @staticmethod
+    def _build_wanfang_search_payload(query: str, page: int) -> bytes:
+        query_bytes = query.encode('utf-8')
+        inner = bytearray()
+        inner.extend(b'\x0a\x05paper')
+        inner.extend(bytes([0x12, len(query_bytes)]))
+        inner.extend(query_bytes)
+        inner.extend(bytes([0x28, max(1, page)]))
+        inner.extend(b'\x30\x14')  # page size = 20
+        inner.extend(b'\x42\x01\x00')
+        inner.extend(b'\x48\x01')
+        inner.extend(b'\x10\x01')
+
+        payload = bytearray()
+        payload.extend(bytes([0x0a, len(inner)]))
+        payload.extend(inner)
+
+        frame = bytearray()
+        frame.append(0)
+        frame.extend(len(payload).to_bytes(4, 'big'))
+        frame.extend(payload)
+        return bytes(frame)
+
+    def _wanfang_fetch_encoded_links(self, base_url: str) -> Dict[str, str]:
+        parsed_url = urlparse(base_url)
+        params = parse_qs(parsed_url.query)
+        query = params.get('q', [''])[0]
+        if not query:
+            return {}
+
+        decoded_query = unquote_plus(query).strip()
+        if not decoded_query:
+            return {}
+
+        try:
+            page = int(params.get('p', ['1'])[0])
+        except ValueError:
+            page = 1
+        page = max(1, page)
+
+        payload = self._build_wanfang_search_payload(decoded_query, page)
+
+        headers = {
+            'content-type': 'application/grpc-web+proto',
+            'x-user-agent': 'grpc-web-javascript/0.1',
+            'x-grpc-web': '1',
+            'origin': 'https://s.wanfangdata.com.cn',
+            'referer': f'https://s.wanfangdata.com.cn/paper?q={requests.utils.quote(decoded_query)}',
+            'user-agent': 'Mozilla/5.0'
+        }
+
+        response = requests.post(
+            'https://s.wanfangdata.com.cn/SearchService.SearchService/search',
+            data=payload,
+            headers=headers,
+            timeout=15
+        )
+        response.raise_for_status()
+
+        # Decode protobuf payload as UTF-8 ignoring control characters.
+        body_text = response.content.decode('utf-8', errors='ignore')
+
+        type_map = {
+            'periodical': {'path': 'periodical', 'prefix': 'periodical'},
+            'thesis': {'path': 'thesis', 'prefix': 'thesis'},
+            'conference': {'path': 'conference', 'prefix': 'conference'},
+            'patent': {'path': 'patent', 'prefix': 'patent'},
+            'standard': {'path': 'standard', 'prefix': 'standard'},
+            'techreport': {'path': 'techreport', 'prefix': 'tech'},
+            'achievement': {'path': 'achievement', 'prefix': 'achievement'},
+            'nstr': {'path': 'nstr', 'prefix': 'nstr'},
+            'localchronicle': {'path': 'localchronicle', 'prefix': 'localchronicle'},
+            'law': {'path': 'law', 'prefix': 'law'},
+            'policy': {'path': 'policy', 'prefix': 'policy'},
+            'video': {'path': 'video', 'prefix': 'video'}
+        }
+
+        pattern = re.compile(
+            r'(Periodical|Thesis|Conference|Patent|Standard|TechReport|Achievement|Nstr|Localchronicle|Law|Policy|Video)'
+            r'.{0,200}?'
+            r'(C[0-9A-Za-z_%+\-]{20,})'
+            r'.{0,160}?([A-Za-z0-9_-]{6,})',
+            re.S
+        )
+
+        mapping: Dict[str, str] = {}
+        for entry_type, token, suffix in pattern.findall(body_text):
+            entry_type_lower = entry_type.lower()
+            info = type_map.get(entry_type_lower, {'path': entry_type_lower, 'prefix': entry_type_lower})
+            record_prefix = info['prefix']
+            suffix_normalized = suffix.lower()
+            token_clean = token.replace('%3D', '=')
+            token_clean = token_clean.rstrip()
+            token_clean = token_clean.rstrip("\"') )")
+            record_id = f"{record_prefix}_{suffix_normalized}"
+            mapping[record_id] = f"https://d.wanfangdata.com.cn/{info['path']}/{token_clean}"
+
+        return mapping
 
     async def _extract_reuters_search(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
         """Special handling for Reuters site search pages."""
@@ -519,6 +674,7 @@ class LinkCrawler:
 
         items = data.get('result', {}).get('articles') or []
         base_domain = 'https://www.reuters.com'
+        seen_urls: set = set()
 
         for item in items:
             if len(articles) >= max_articles:
@@ -537,6 +693,10 @@ class LinkCrawler:
                 article_url = url_path
             else:
                 article_url = urljoin(base_domain, url_path)
+
+            if article_url in seen_urls:
+                continue
+            seen_urls.add(article_url)
 
             if not title:
                 title = article_url
@@ -602,6 +762,8 @@ class LinkCrawler:
             entity_ids = data.get('justSmart', {}).get('actionParameters', {}).get('entityIds', {})
             id_to_name = {str(v): k for k, v in entity_ids.items()}
 
+            seen_urls: set = set()
+
             for item in main_results:
                 if len(articles) >= max_articles:
                     break
@@ -611,6 +773,10 @@ class LinkCrawler:
                 article_url = self._build_statista_url(item, entity_name)
                 if not article_url:
                     continue
+
+                if article_url in seen_urls:
+                    continue
+                seen_urls.add(article_url)
 
                 title_fields = [
                     item.get('graphheader'),
@@ -773,6 +939,79 @@ class LinkCrawler:
 
         return articles
 
+    async def _extract_google_scholar_paginated(
+        self,
+        page,
+        base_url: str,
+        max_articles: int,
+        start_page: int,
+        end_page: int
+    ) -> List[Dict[str, str]]:
+        """Handle multi-page traversal for Google Scholar search results."""
+
+        if max_articles <= 0:
+            return []
+
+        articles: List[Dict[str, str]] = []
+        seen_urls: set[str] = set()
+
+        parsed = urlparse(base_url)
+        base_query = parse_qs(parsed.query, keep_blank_values=True)
+
+        page_size = 10
+        num_values = base_query.get('num')
+        if num_values:
+            try:
+                candidate = int(num_values[0])
+                if candidate > 0:
+                    page_size = candidate
+            except (ValueError, TypeError):
+                pass
+
+        for page_index in range(start_page, end_page + 1):
+            if len(articles) >= max_articles:
+                break
+
+            offset = page_index * page_size
+            remaining = max_articles - len(articles)
+            if remaining <= 0:
+                break
+
+            query_params = {key: value[:] for key, value in base_query.items()}
+            query_params['start'] = [str(offset)]
+            page_query = urlencode(query_params, doseq=True)
+            page_url = urlunparse(parsed._replace(query=page_query))
+
+            try:
+                await page.goto(page_url, wait_until="domcontentloaded", timeout=self.timeout)
+            except Exception as exc:
+                logger.error("Failed to load Google Scholar page %s: %s", page_url, exc)
+                break
+
+            await asyncio.sleep(2)
+
+            page_articles = await self._extract_google_scholar(page, page_url, remaining)
+            if not page_articles:
+                logger.debug("No Google Scholar results found on page %s; stopping pagination", page_url)
+                break
+
+            added = 0
+            for item in page_articles:
+                url = (item.get('url') or '').strip()
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                articles.append(item)
+                added += 1
+                if len(articles) >= max_articles:
+                    break
+
+            if added == 0:
+                logger.debug("No new Google Scholar articles added from page %s; stopping pagination", page_url)
+                break
+
+        return articles
+
     async def _extract_google_scholar(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
         """Special handling for Google Scholar search pages."""
         articles: List[Dict[str, str]] = []
@@ -904,10 +1143,19 @@ class LinkCrawler:
 
         return f"{base}/{slug}/"
 
-    async def _extract_articles(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
+    async def _extract_articles(
+        self,
+        page,
+        base_url: str,
+        max_articles: int,
+        start_page: int = 0,
+        end_page: Optional[int] = None
+    ) -> List[Dict[str, str]]:
         """提取文章列表"""
         articles = []
-        
+        start_page = max(0, start_page or 0)
+        resolved_end_page = max(end_page, start_page) if end_page is not None else start_page
+
         parsed_url = urlparse(base_url)
 
         if parsed_url.netloc.endswith('wanfangdata.com.cn') and parsed_url.path.startswith('/paper'):
@@ -931,7 +1179,13 @@ class LinkCrawler:
                 return panda_articles
 
         if parsed_url.netloc.endswith('google.com') and parsed_url.path.startswith('/scholar'):
-            google_articles = await self._extract_google_scholar(page, base_url, max_articles)
+            google_articles = await self._extract_google_scholar_paginated(
+                page,
+                base_url,
+                max_articles,
+                start_page=start_page,
+                end_page=resolved_end_page
+            )
             if google_articles:
                 return google_articles
 
@@ -1089,16 +1343,27 @@ class LinkCrawler:
 # 全局爬虫实例
 crawler_instance = LinkCrawler()
 
-async def crawl_website(url: str, max_articles: int = 50) -> Dict:
+async def crawl_website(
+    url: str,
+    max_articles: int = 50,
+    start_page: int = 0,
+    end_page: Optional[int] = None
+) -> Dict:
     """
     爬取网站文章的便捷函??
     
     Args:
         url: 目标网站URL
         max_articles: 最大文章数
+        start_page: 起始页码
+        end_page: 结束页码
         
     Returns:
         爬取结果字典
     """
-    return await crawler_instance.crawl_website_articles(url, max_articles)
-
+    return await crawler_instance.crawl_website_articles(
+        url,
+        max_articles=max_articles,
+        start_page=start_page,
+        end_page=end_page
+    )
