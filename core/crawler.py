@@ -240,7 +240,14 @@ class LinkCrawler:
             
         return info
     
-    async def _extract_foodnavigator_search(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
+    async def _extract_foodnavigator_search(
+        self,
+        page,
+        base_url: str,
+        max_articles: int,
+        start_page: int,
+        end_page: int
+    ) -> List[Dict[str, str]]:
         """Special handling for FoodNavigator search pages."""
         articles: List[Dict[str, str]] = []
         parsed = urlparse(base_url)
@@ -283,6 +290,12 @@ class LinkCrawler:
                 except ValueError:
                     start_index = 0
 
+        start_page = max(0, start_page)
+        end_page = max(end_page, start_page)
+        page_limit = max(1, end_page - start_page + 1)
+
+        start_index = max(start_index, start_page * FOODNAVIGATOR_BATCH_SIZE)
+
         faceted_key = query_params.get('facetedkey', [None])[0]
         faceted_value = query_params.get('facetedvalue', [None])[0]
         date_range = query_params.get('daterange', [None])[0]
@@ -291,7 +304,9 @@ class LinkCrawler:
         seen_urls: set = set()
         user_agent = await page.evaluate('() => navigator.userAgent')
 
-        while len(articles) < max_articles:
+        pages_processed = 0
+
+        while len(articles) < max_articles and pages_processed < page_limit:
             batch = min(max_articles - len(articles), FOODNAVIGATOR_BATCH_SIZE)
             params = {
                 'queryly_key': FOODNAVIGATOR_QUERYLY_KEY,
@@ -380,6 +395,8 @@ class LinkCrawler:
             except (TypeError, ValueError):
                 next_index_int = offset + len(items)
 
+            pages_processed += 1
+
             if next_index_int <= offset or len(articles) >= max_articles:
                 break
 
@@ -387,35 +404,22 @@ class LinkCrawler:
 
         return articles
 
-    async def _extract_wanfang_search(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
+    async def _extract_wanfang_search(
+        self,
+        page,
+        base_url: str,
+        max_articles: int,
+        start_page: int,
+        end_page: int
+    ) -> List[Dict[str, str]]:
         """Special handling for Wanfang search pages."""
         articles: List[Dict[str, str]] = []
 
-        try:
-            await page.wait_for_selector('div.normal-list', timeout=10000)
-        except Exception:
-            return articles
+        start_page = max(0, start_page)
+        end_page = max(end_page, start_page)
 
-        encoded_map: Dict[str, str] = {}
-        try:
-            encoded_map = await asyncio.to_thread(self._wanfang_fetch_encoded_links, base_url)
-        except Exception as exc:  # pragma: no cover - network dependent
-            logger.warning("Failed to resolve Wanfang encoded links: %s", exc)
-
-        raw_items = await page.evaluate(
-            """() => Array.from(document.querySelectorAll('div.normal-list')).map(el => ({
-                id: (el.querySelector('.title-id-hidden')?.textContent || '').trim(),
-                title: (el.querySelector('.title')?.textContent || '').trim(),
-                link: (el.querySelector('.title a')?.href || '').trim(),
-                summary: (el.querySelector('.abstract-area')?.innerText || '').trim(),
-                authors: Array.from(el.querySelectorAll('.author-area .authors')).map(node => node.textContent.trim()).filter(Boolean),
-                typeLabel: el.querySelector('.essay-type')?.textContent?.trim() || '',
-                keywords: Array.from(el.querySelectorAll('.keywords-area .keywords-list')).map(node => node.textContent.trim()).filter(Boolean)
-            }))"""
-        )
-
-        if not raw_items:
-            return articles
+        parsed_base = urlparse(base_url)
+        base_query = parse_qs(parsed_base.query)
 
         type_map = {
             'periodical': 'perio',
@@ -440,66 +444,184 @@ class LinkCrawler:
         seen_ids: set = set()
         seen_urls: set = set()
 
-        for item in raw_items:
-            link = (item.get('link') or '').strip()
-            detail_url = ''
+        for page_index in range(start_page, end_page + 1):
+            if len(articles) >= max_articles:
+                break
 
-            if link:
-                detail_url = urljoin(base_url, link)
+            page_number = max(1, page_index + 1)
+            page_query = {key: values[:] for key, values in base_query.items()}
+            page_query['p'] = [str(page_number)]
+            query_string = urlencode(page_query, doseq=True)
+            page_url = urlunparse(parsed_base._replace(query=query_string))
 
-            record_id = (item.get('id') or '').strip()
-            record_id_lower = record_id.lower()
-            if not detail_url:
-                if record_id_lower and record_id_lower in encoded_map:
-                    detail_url = encoded_map[record_id_lower]
-                elif record_id:
-                    prefix = record_id.split('_', 1)[0].lower() if '_' in record_id else record_id_lower
-                    type_param = type_map.get(prefix, prefix or 'perio')
-                    detail_url = f"https://www.wanfangdata.com.cn/details/detail.do?_type={type_param}&id={record_id}"
+            try:
+                await page.goto(page_url, wait_until="domcontentloaded", timeout=self.timeout)
+            except Exception as exc:
+                logger.debug("Failed to load Wanfang page %s: %s", page_url, exc)
+                break
 
-            if not record_id and not detail_url:
+            try:
+                await page.wait_for_selector('div.normal-list', timeout=10000)
+            except Exception:
                 continue
 
-            if record_id_lower:
-                if record_id_lower in seen_ids:
+            encoded_map: Dict[str, str] = {}
+            try:
+                encoded_map = await asyncio.to_thread(self._wanfang_fetch_encoded_links, page_url)
+            except Exception as exc:  # pragma: no cover - network dependent
+                logger.warning("Failed to resolve Wanfang encoded links for %s: %s", page_url, exc)
+
+            raw_items = await page.evaluate(
+                """() => Array.from(document.querySelectorAll('div.normal-list')).map(el => ({
+                    id: (el.querySelector('.title-id-hidden')?.textContent || '').trim(),
+                    title: (el.querySelector('.title')?.textContent || '').trim(),
+                    link: (el.querySelector('.title a')?.href || '').trim(),
+                    summary: (el.querySelector('.abstract-area')?.innerText || '').trim(),
+                    authors: Array.from(el.querySelectorAll('.author-area .authors')).map(node => node.textContent.trim()).filter(Boolean),
+                    typeLabel: el.querySelector('.essay-type')?.textContent?.trim() || '',
+                    keywords: Array.from(el.querySelectorAll('.keywords-area .keywords-list')).map(node => node.textContent.trim()).filter(Boolean)
+                }))"""
+            )
+
+            if not raw_items:
+                continue
+
+            for item in raw_items:
+                if len(articles) >= max_articles:
+                    break
+
+                link = (item.get('link') or '').strip()
+                detail_url = ''
+
+                if link:
+                    detail_url = urljoin(page_url, link)
+
+                record_id = (item.get('id') or '').strip()
+                record_id_lower = record_id.lower()
+                if not detail_url:
+                    if record_id_lower and record_id_lower in encoded_map:
+                        detail_url = encoded_map[record_id_lower]
+                    elif record_id:
+                        prefix = record_id.split('_', 1)[0].lower() if '_' in record_id else record_id_lower
+                        type_param = type_map.get(prefix, prefix or 'perio')
+                        detail_url = f"https://www.wanfangdata.com.cn/details/detail.do?_type={type_param}&id={record_id}"
+
+                if not record_id and not detail_url:
                     continue
-                seen_ids.add(record_id_lower)
 
-            if detail_url:
-                if detail_url in seen_urls:
-                    continue
-                seen_urls.add(detail_url)
+                if record_id_lower:
+                    if record_id_lower in seen_ids:
+                        continue
+                    seen_ids.add(record_id_lower)
 
-            title = (item.get('title') or '').strip() or detail_url
+                if detail_url:
+                    if detail_url in seen_urls:
+                        continue
+                    seen_urls.add(detail_url)
 
-            authors = item.get('authors') or []
-            source_info = ''
-            if authors:
-                tail = authors[-1]
-                if any(ch.isdigit() for ch in tail):
-                    source_info = tail
-                    authors = authors[:-1]
+                title = (item.get('title') or '').strip() or detail_url
 
-            summary = (item.get('summary') or '').strip()
-            if summary.startswith('摘要'):
-                summary = summary[2:].lstrip('：:').strip()
+                authors = item.get('authors') or []
+                source_info = ''
+                if authors:
+                    tail = authors[-1]
+                    if any(ch.isdigit() for ch in tail):
+                        source_info = tail
+                        authors = authors[:-1]
 
-            keywords = item.get('keywords') or []
-            type_label = item.get('typeLabel') or ''
+                summary = (item.get('summary') or '').strip()
+                if summary.startswith('摘要'):
+                    summary = summary[2:].lstrip('：:').strip()
 
-            articles.append({
-                'title': title[:200],
-                'url': detail_url,
-                'record_id': record_id,
-                'summary': summary[:500] if summary else '',
-                'authors': authors,
-                'source': source_info,
-                'type': type_label,
-                'keywords': keywords,
-                'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S')
-            })
+                keywords = item.get('keywords') or []
+                type_label = item.get('typeLabel') or ''
 
+                articles.append({
+                    'title': title[:200],
+                    'url': detail_url,
+                    'record_id': record_id,
+                    'summary': summary[:500] if summary else '',
+                    'authors': authors,
+                    'source': source_info,
+                    'type': type_label,
+                    'keywords': keywords,
+                    'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S')
+                })
+
+        return articles
+
+    async def _extract_panda985_scholar(
+        self,
+        page,
+        base_url: str,
+        max_articles: int,
+        start_page: int,
+        end_page: int
+    ) -> List[Dict[str, str]]:
+        """Handle Panda985 scholar pagination."""
+
+        if max_articles <= 0:
+            return []
+
+        start_page = max(0, start_page)
+        end_page = max(end_page, start_page)
+
+        parsed = urlparse(base_url)
+        base_query = parse_qs(parsed.query, keep_blank_values=True)
+
+        page_size = 10
+        num_values = base_query.get('num')
+        if num_values:
+            try:
+                candidate = int(num_values[0])
+                if candidate > 0:
+                    page_size = candidate
+            except (ValueError, TypeError):
+                pass
+
+        articles: List[Dict[str, str]] = []
+        seen_urls: set = set()
+
+        for page_index in range(start_page, end_page + 1):
             if len(articles) >= max_articles:
+                break
+
+            offset = page_index * page_size
+            remaining = max_articles - len(articles)
+            if remaining <= 0:
+                break
+
+            query_params = {key: value[:] for key, value in base_query.items()}
+            query_params['start'] = [str(offset)]
+            page_query = urlencode(query_params, doseq=True)
+            page_url = urlunparse(parsed._replace(query=page_query))
+
+            try:
+                await page.goto(page_url, wait_until="domcontentloaded", timeout=self.timeout)
+            except Exception as exc:
+                logger.error("Failed to load Panda985 scholar page %s: %s", page_url, exc)
+                break
+
+            await asyncio.sleep(2)
+
+            page_articles = await self._extract_panda985_scholar_page(page, page_url, remaining)
+            if not page_articles:
+                logger.debug("No Panda985 results found on page %s; stopping pagination", page_url)
+                break
+
+            added = 0
+            for item in page_articles:
+                url = (item.get('url') or '').strip()
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                articles.append(item)
+                added += 1
+                if len(articles) >= max_articles:
+                    break
+
+            if added == 0:
+                logger.debug("No new Panda985 articles added from page %s; stopping pagination", page_url)
                 break
 
         return articles
@@ -603,7 +725,14 @@ class LinkCrawler:
 
         return mapping
 
-    async def _extract_reuters_search(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
+    async def _extract_reuters_search(
+        self,
+        page,
+        base_url: str,
+        max_articles: int,
+        start_page: int,
+        end_page: int
+    ) -> List[Dict[str, str]]:
         """Special handling for Reuters site search pages."""
         articles: List[Dict[str, str]] = []
         parsed = urlparse(base_url)
@@ -620,14 +749,8 @@ class LinkCrawler:
         if not keyword:
             return articles
 
-        size = max(1, min(max_articles, 20))
-        payload = {
-            'keyword': keyword,
-            'offset': 0,
-            'orderby': 'display_date:desc',
-            'size': size,
-            'website': 'reuters'
-        }
+        start_page = max(0, start_page)
+        end_page = max(end_page, start_page)
 
         fetch_script = """async ({url, payload}) => {
             const params = new URLSearchParams();
@@ -647,83 +770,114 @@ class LinkCrawler:
             });
             return { status: response.status, text: await response.text() };
         }"""
-
-        try:
-            fetch_result = await page.evaluate(fetch_script, {
-                'url': 'https://www.reuters.com/pf/api/v3/content/fetch/articles-by-search-v2',
-                'payload': payload
-            })
-        except Exception as exc:
-            logger.warning('Failed to query Reuters search API via page context: %s', exc)
-            return articles
-
-        status = fetch_result.get('status') if isinstance(fetch_result, dict) else None
-        if status != 200:
-            logger.warning('Reuters search API returned non-200 response: %s', status)
-            return articles
-
-        raw_text = (fetch_result.get('text') or '').strip()
-        if not raw_text:
-            return articles
-
-        try:
-            data = json.loads(raw_text)
-        except json.JSONDecodeError as exc:
-            logger.warning('Failed to decode Reuters search payload: %s', exc)
-            return articles
-
-        items = data.get('result', {}).get('articles') or []
         base_domain = 'https://www.reuters.com'
         seen_urls: set = set()
 
-        for item in items:
+        page_size_limit = 20
+
+        for page_index in range(start_page, end_page + 1):
             if len(articles) >= max_articles:
                 break
 
-            title = (item.get('title') or item.get('headline') or '').strip()
-            description = (item.get('description') or '').strip()
-            if not title and description:
-                title = description[:200]
+            offset = page_index * page_size_limit
+            remaining = max_articles - len(articles)
+            request_size = max(1, min(page_size_limit, remaining))
 
-            url_path = (item.get('canonical_url') or item.get('url') or '').strip()
-            if not url_path:
-                continue
+            payload = {
+                'keyword': keyword,
+                'offset': offset,
+                'orderby': 'display_date:desc',
+                'size': request_size,
+                'website': 'reuters'
+            }
 
-            if url_path.startswith('http'):
-                article_url = url_path
-            else:
-                article_url = urljoin(base_domain, url_path)
+            try:
+                fetch_result = await page.evaluate(fetch_script, {
+                    'url': 'https://www.reuters.com/pf/api/v3/content/fetch/articles-by-search-v2',
+                    'payload': payload
+                })
+            except Exception as exc:
+                logger.warning('Failed to query Reuters search API via page context: %s', exc)
+                break
 
-            if article_url in seen_urls:
-                continue
-            seen_urls.add(article_url)
+            status = fetch_result.get('status') if isinstance(fetch_result, dict) else None
+            if status != 200:
+                logger.warning('Reuters search API returned non-200 response: %s', status)
+                break
 
-            if not title:
-                title = article_url
+            raw_text = (fetch_result.get('text') or '').strip()
+            if not raw_text:
+                break
 
-            articles.append({
-                'title': title[:200],
-                'url': article_url,
-                'published_at': item.get('published_time'),
-                'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S')
-            })
+            try:
+                data = json.loads(raw_text)
+            except json.JSONDecodeError as exc:
+                logger.warning('Failed to decode Reuters search payload: %s', exc)
+                break
+
+            items = data.get('result', {}).get('articles') or []
+            if not items:
+                break
+
+            for item in items:
+                if len(articles) >= max_articles:
+                    break
+
+                title = (item.get('title') or item.get('headline') or '').strip()
+                description = (item.get('description') or '').strip()
+                if not title and description:
+                    title = description[:200]
+
+                url_path = (item.get('canonical_url') or item.get('url') or '').strip()
+                if not url_path:
+                    continue
+
+                if url_path.startswith('http'):
+                    article_url = url_path
+                else:
+                    article_url = urljoin(base_domain, url_path)
+
+                if article_url in seen_urls:
+                    continue
+                seen_urls.add(article_url)
+
+                if not title:
+                    title = article_url
+
+                articles.append({
+                    'title': title[:200],
+                    'url': article_url,
+                    'published_at': item.get('published_time'),
+                    'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S')
+                })
+
+            if len(items) < request_size:
+                break
 
         return articles
 
-    async def _extract_statista_search(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
+    async def _extract_statista_search(
+        self,
+        page,
+        base_url: str,
+        max_articles: int,
+        start_page: int,
+        end_page: int
+    ) -> List[Dict[str, str]]:
         """专门处理 Statista 搜索结果页"""
         articles: List[Dict[str, str]] = []
         parsed = urlparse(base_url)
         query_params = parse_qs(parsed.query)
 
-        # 构建请求参数，保留原有查询条件并强制返回 JSON
-        api_params = [('asJsonResponse', '1')]
+        start_page = max(0, start_page)
+        end_page = max(end_page, start_page)
+
+        base_params = [('asJsonResponse', '1')]
         for key, values in query_params.items():
             for value in values:
-                if value is not None:
-                    api_params.append((key, value))
+                if value is not None and key != 'p':
+                    base_params.append((key, value))
 
-        # Statista 接口在缺少部分参数时会回退默认值，这里补齐关键参数
         defaults = {
             'q': '',
             'p': '1',
@@ -735,34 +889,65 @@ class LinkCrawler:
             'isoregion': '0',
             'language': '0',
         }
-        existing_keys = {key for key, _ in api_params}
+        existing_keys = {key for key, _ in base_params}
         for key, value in defaults.items():
-            if key not in existing_keys:
-                api_params.append((key, value))
+            if key != 'p' and key not in existing_keys:
+                base_params.append((key, value))
 
-        try:
-            query_string = urlencode(api_params, doseq=True)
-            target_url = f"https://www.statista.com/search/?{query_string}"
-            fetch_result = await page.evaluate(
-                "async (targetUrl) => {\n                    const response = await fetch(targetUrl, {\n                        headers: {\n                            'Accept': 'application/json, text/plain, */*',\n                            'X-Requested-With': 'XMLHttpRequest'\n                        },\n                        credentials: 'include'\n                    });\n                    const text = await response.text();\n                    return { status: response.status, text };\n                }",
-                target_url
-            )
+        seen_urls: set = set()
+
+        fetch_script = (
+            "async (targetUrl) => {\n"
+            "                    const response = await fetch(targetUrl, {\n"
+            "                        headers: {\n"
+            "                            'Accept': 'application/json, text/plain, */*',\n"
+            "                            'X-Requested-With': 'XMLHttpRequest'\n"
+            "                        },\n"
+            "                        credentials: 'include'\n"
+            "                    });\n"
+            "                    const text = await response.text();\n"
+            "                    return { status: response.status, text };\n"
+            "                }"
+        )
+
+        for page_index in range(start_page, end_page + 1):
+            if len(articles) >= max_articles:
+                break
+
+            page_number = max(1, page_index + 1)
+            current_params = list(base_params)
+            current_params.append(('p', str(page_number)))
+
+            try:
+                query_string = urlencode(current_params, doseq=True)
+                target_url = f"https://www.statista.com/search/?{query_string}"
+                fetch_result = await page.evaluate(fetch_script, target_url)
+            except Exception as exc:
+                logger.warning("Failed to query Statista search API: %s", exc)
+                break
+
             status = fetch_result.get('status') if fetch_result else None
             if status != 200:
                 logger.warning("Statista API non-2xx response: %s", status)
-                return articles
+                break
 
             raw_text = (fetch_result.get('text') or '').strip()
             if not raw_text:
-                return articles
+                break
 
-            data = json.loads(raw_text)
+            try:
+                data = json.loads(raw_text)
+            except json.JSONDecodeError as exc:
+                logger.warning("Failed to decode Statista payload: %s", exc)
+                break
+
             results = data.get('results', {})
             main_results = results.get('mainselect') or []
+            if not main_results:
+                break
+
             entity_ids = data.get('justSmart', {}).get('actionParameters', {}).get('entityIds', {})
             id_to_name = {str(v): k for k, v in entity_ids.items()}
-
-            seen_urls: set = set()
 
             for item in main_results:
                 if len(articles) >= max_articles:
@@ -796,10 +981,7 @@ class LinkCrawler:
                     'extracted_at': time.strftime('%Y-%m-%d %H:%M:%S')
                 })
 
-            return articles
-        except Exception as exc:
-            logger.warning("Failed to parse Statista search results: %s", exc)
-            return articles
+        return articles
 
 
     async def _solve_panda_slider(self, page) -> bool:
@@ -851,8 +1033,8 @@ class LinkCrawler:
         except Exception:
             return False
 
-    async def _extract_panda985_scholar(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
-        """Special handling for Panda985 scholar search pages."""
+    async def _extract_panda985_scholar_page(self, page, base_url: str, max_articles: int) -> List[Dict[str, str]]:
+        """Parse a single Panda985 scholar search results page."""
         articles: List[Dict[str, str]] = []
 
         slider_passed = await self._solve_panda_slider(page)
@@ -953,7 +1135,7 @@ class LinkCrawler:
             return []
 
         articles: List[Dict[str, str]] = []
-        seen_urls: set[str] = set()
+        seen_urls: set = set()
 
         parsed = urlparse(base_url)
         base_query = parse_qs(parsed.query, keep_blank_values=True)
@@ -1159,22 +1341,46 @@ class LinkCrawler:
         parsed_url = urlparse(base_url)
 
         if parsed_url.netloc.endswith('wanfangdata.com.cn') and parsed_url.path.startswith('/paper'):
-            wanfang_articles = await self._extract_wanfang_search(page, base_url, max_articles)
+            wanfang_articles = await self._extract_wanfang_search(
+                page,
+                base_url,
+                max_articles,
+                start_page=start_page,
+                end_page=resolved_end_page
+            )
             if wanfang_articles:
                 return wanfang_articles
 
         if parsed_url.netloc.endswith('foodnavigator.com') and parsed_url.path.startswith('/search'):
-            foodnavigator_articles = await self._extract_foodnavigator_search(page, base_url, max_articles)
+            foodnavigator_articles = await self._extract_foodnavigator_search(
+                page,
+                base_url,
+                max_articles,
+                start_page=start_page,
+                end_page=resolved_end_page
+            )
             if foodnavigator_articles:
                 return foodnavigator_articles
 
         if parsed_url.netloc.endswith('reuters.com'):
-            reuters_articles = await self._extract_reuters_search(page, base_url, max_articles)
+            reuters_articles = await self._extract_reuters_search(
+                page,
+                base_url,
+                max_articles,
+                start_page=start_page,
+                end_page=resolved_end_page
+            )
             if reuters_articles:
                 return reuters_articles
 
         if parsed_url.netloc.endswith('panda985.com') and parsed_url.path.startswith('/scholar'):
-            panda_articles = await self._extract_panda985_scholar(page, base_url, max_articles)
+            panda_articles = await self._extract_panda985_scholar(
+                page,
+                base_url,
+                max_articles,
+                start_page=start_page,
+                end_page=resolved_end_page
+            )
             if panda_articles:
                 return panda_articles
 
@@ -1190,7 +1396,13 @@ class LinkCrawler:
                 return google_articles
 
         if parsed_url.netloc.endswith('statista.com') and parsed_url.path.startswith('/search'):
-            statista_articles = await self._extract_statista_search(page, base_url, max_articles)
+            statista_articles = await self._extract_statista_search(
+                page,
+                base_url,
+                max_articles,
+                start_page=start_page,
+                end_page=resolved_end_page
+            )
             if statista_articles:
                 return statista_articles
 
